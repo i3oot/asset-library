@@ -21,7 +21,7 @@ async function start(t, overrides = {}) {
   const port = socket.address().port;
   await new Promise(resolve => socket.close(resolve));
   const url = `http://127.0.0.1:${port}`;
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AI_') && !key.startsWith('DATABASE_')));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AI_') && !key.startsWith('DATABASE_') && !key.startsWith('OIDC_') && key !== 'AUTH_MODE'));
   const child = spawn(process.execPath, [build], {
     cwd, env: { ...env, HOST: '127.0.0.1', PORT: String(port), ORIGIN: url, PROTOCOL_HEADER: 'x-forwarded-proto', ...overrides },
     stdio: 'ignore',

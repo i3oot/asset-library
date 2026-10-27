@@ -30,7 +30,7 @@ A simple **self-hosted asset library** for your game development needs, availabl
 
 🚧 Currently not available
 
-- User accounts / permissions
+- Per-user libraries, local password accounts and role-based permissions
 
 # 🚀 Quick Start
 
@@ -141,6 +141,52 @@ Environment overrides are used at runtime and are never copied into that file.
 For shared instances, set `AI_CONFIG_READONLY=true` alongside your secret-backed
 `AI_API_KEY` to prevent users from changing the destination of AI requests.
 
+# Native OpenID Connect login
+
+Set `AUTH_MODE=oidc` with `ORIGIN`, `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID` and a
+secret-managed `OIDC_CLIENT_SECRET`. Register the exact callback
+`<ORIGIN>/auth/callback` at Authentik (or another conforming OIDC provider), using
+a confidential authorization-code client, PKCE and asymmetric ID-token signing.
+The app performs its own login and session validation; a forward-auth proxy is
+not required. `AUTH_MODE=none` preserves the original self-hosted behavior.
+Incomplete or invalid native-auth configuration fails closed.
+
+Login uses fresh state, nonce and S256 PKCE. Issuer, audience, expiry and ID-token
+signatures are verified. Transactions are single-use with a ten-minute expiry.
+The app discards provider tokens after login, stores only minimal identity data
+and a hash of a random session ID in the selected database, and sends the ID in
+an HttpOnly/SameSite=Lax cookie. HTTPS deployments use host-only `__Host-` Secure
+cookies. Sessions survive restarts and expire at the earlier of ID-token expiry
+or `OIDC_SESSION_MAX_AGE_SECONDS` (default one hour, maximum eight hours).
+
+IdP application policies must restrict the intended users/groups. Optionally set
+`OIDC_ALLOWED_GROUPS` to a comma-separated allow-list of signed `groups` claims
+for an additional app-side restriction. Do not use an email display value as an
+identity/permission check. All admitted users still share the library and its
+editing/deletion rights: native identity does not add per-user asset isolation.
+Group/user revocation is bounded by session expiry; back-channel logout is not
+implemented. POST-only, same-origin Sign out invalidates the local app session
+and displays a signed-out page, leaving other IdP/SSO application sessions alone.
+
+Authenticated data routes deny anonymous requests, including downloads and
+thumbnails. `/auth/check` returns a minimal JSON session verdict for a trusted
+private edge checker. It reports `authenticated: false` when native auth is off,
+so a native-session edge policy cannot accidentally fail open into proxy mode.
+Keep health/edge-check access private as appropriate for your ingress.
+
+For Authentik behind cluster ingress, `OIDC_INTERNAL_ORIGIN` can send server-side
+discovery/token/JWKS requests through its private service while retaining and
+validating the public HTTPS issuer. Only the configured issuer origin and
+`/application/o/` paths are eligible. A private HTTP hop relies on network
+isolation; do not use it over an untrusted network. Native login normally requires
+HTTPS. `OIDC_ALLOW_HTTP_LOCALHOST=true` permits HTTP only when both issuer and app
+origins are loopback/localhost, for isolated development tests.
+
+Authentication tables are created on either backend. The SQLite-to-PostgreSQL
+metadata migration does not copy login transactions or sessions; users sign in
+again after a backend switch. Keep database credentials and OIDC credentials in
+your deployment secret manager, never in source or browser configuration.
+
 # PostgreSQL and SQLite
 
 Set `DATABASE_BACKEND=sqlite` (the default) to use `data/assets.db`, or
@@ -238,7 +284,7 @@ Roadmap:
 - Bulk actions (tagging, deleting, downloading)
 - Metadata generation for 3D models
 - Add support for more file types (e.g. video, fonts, ...)
-- User accounts and permissions
+- Per-user libraries and role-based permissions
 - Improved infinite scrolling/padination for large libraries
 - Better responsiveness for mobile devices
 

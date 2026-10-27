@@ -26,6 +26,15 @@ const schema = `
   );
   CREATE INDEX IF NOT EXISTS idx_assets_upload_date ON assets(upload_date DESC);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_hash ON assets(hash);
+  CREATE TABLE IF NOT EXISTS oidc_transactions (
+    id_hash TEXT PRIMARY KEY, state TEXT NOT NULL, verifier TEXT NOT NULL,
+    nonce TEXT NOT NULL, return_path TEXT NOT NULL, expires_at BIGINT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS auth_sessions (
+    id_hash TEXT PRIMARY KEY, user_json TEXT NOT NULL, expires_at BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at);
+  CREATE INDEX IF NOT EXISTS idx_oidc_transactions_expiry ON oidc_transactions(expires_at);
 `;
 
 // SQL is application-owned; parameter values are always sent separately.

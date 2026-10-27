@@ -11,8 +11,8 @@ export async function startApp(t, overrides = {}) {
   const socket = createServer(); socket.listen(0, '127.0.0.1'); await once(socket, 'listening');
   const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
   const origin = `http://127.0.0.1:${port}`;
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AI_') && !key.startsWith('DATABASE_')));
-  const serverEnv = { ...env, HOST: '127.0.0.1', PORT: String(port), AI_ENABLED: 'false', PROTOCOL_HEADER: 'x-forwarded-proto', BODY_SIZE_LIMIT: '1M', ...overrides };
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AI_') && !key.startsWith('DATABASE_') && !key.startsWith('OIDC_') && key !== 'AUTH_MODE'));
+  const serverEnv = { ...env, HOST: '127.0.0.1', PORT: String(port), ORIGIN: origin, AI_ENABLED: 'false', PROTOCOL_HEADER: 'x-forwarded-proto', BODY_SIZE_LIMIT: '1M', ...overrides };
   let child;
   async function stop() {
     if (child && child.exitCode === null && child.signalCode === null) {
@@ -22,7 +22,7 @@ export async function startApp(t, overrides = {}) {
   async function launch() {
     child = spawn(process.execPath, [build], { cwd, env: serverEnv, stdio: 'ignore' });
     for (let i = 0; i < 15; i++) {
-      try { if ((await fetch(`${origin}/api/assets`, { signal: AbortSignal.timeout(1000) })).ok) return; }
+      try { if ((await fetch(`${origin}/healthz`, { signal: AbortSignal.timeout(1000) })).ok) return; }
       catch { /* Wait for startup. */ }
       if (child.exitCode !== null || child.signalCode !== null) throw new Error('Production server exited');
       await new Promise(resolve => setTimeout(resolve, 50));

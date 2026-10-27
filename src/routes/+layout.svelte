@@ -9,7 +9,7 @@
   import siteManifest from "$lib/assets/site.webmanifest";
   import { Toaster } from "svelte-sonner";
 
-  let { children } = $props();
+  let { children, data } = $props();
 </script>
 
 <svelte:head>
@@ -22,9 +22,21 @@
   <link rel="manifest" href={siteManifest} />
 </svelte:head>
 
+{#if data.auth?.enabled && data.auth.user}
+  <div class="account">
+    <span>{data.auth.user.name}</span>
+    <form method="POST" action="/auth/logout"><button type="submit">Sign out</button></form>
+  </div>
+{/if}
 {@render children()}
 
 <Toaster
   position="top-right"
   toastOptions={{ unstyled: true, class: "toast" }}
 />
+
+<style>
+  .account { max-width: 1168px; margin: 0.5rem auto 0; padding: 0 1rem; display: flex; justify-content: flex-end; gap: 1rem; align-items: center; }
+  .account form { margin: 0; }
+  .account button { background: var(--surface-inset); color: var(--app-text); border: 1px solid var(--borderHoverColor); border-radius: 6px; padding: 0.35rem 0.6rem; cursor: pointer; }
+</style>

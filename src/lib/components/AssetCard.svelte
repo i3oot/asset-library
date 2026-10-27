@@ -1,5 +1,6 @@
 <script lang="ts">
-  import Icon from "@iconify/svelte";
+  import { safeSourceUrl } from "$lib/safe-url";
+  import Icon from "$lib/components/Icon.svelte";
   import type { AssetCategory, AssetView } from "$lib/types";
   import AudioPreview from "$lib/components/AudioPreview.svelte";
   import Button from "$lib/components/Button.svelte";
@@ -111,7 +112,8 @@
     {#if asset.sourceUrl?.trim()}
       <Button
         onclick={() => {
-          globalThis.open(asset.sourceUrl, "_blank", "noopener,noreferrer");
+          const url = safeSourceUrl(asset.sourceUrl);
+          if (url) globalThis.open(url, "_blank", "noopener,noreferrer");
         }}
         ariaLabel="Open source link"
         title="Open source link"

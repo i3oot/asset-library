@@ -1,11 +1,11 @@
 <script lang="ts">
-  import Icon from "@iconify/svelte";
+  import Icon from "$lib/components/Icon.svelte";
   import Fuse from "fuse.js";
   import { toast } from "svelte-sonner";
   import { onMount } from "svelte";
   import { replaceState } from "$app/navigation";
-  import { browser } from "$app/environment";
-  import { env as publicEnv } from "$env/dynamic/public";
+  import { browser } from "$app/env";
+  import * as publicEnv from "$app/env/public";
   import type { AssetCategory, AssetView } from "$lib/types";
   import AssetCard from "$lib/components/AssetCard.svelte";
   import Button from "$lib/components/Button.svelte";

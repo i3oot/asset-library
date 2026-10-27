@@ -100,6 +100,14 @@
         const { OrbitControls } = await import(
           "three/examples/jsm/controls/OrbitControls.js"
         );
+        const manager = new THREE.LoadingManager();
+        manager.setURLModifier((value) => {
+          const url = new URL(value, globalThis.location.href);
+          if (url.protocol !== "data:" && url.origin !== globalThis.location.origin) {
+            throw new Error("External model resources are blocked");
+          }
+          return url.href;
+        });
         const ext = fileExt(fileName);
         const accentColor = readCssVar("--accent", "hsl(217 92% 62%)");
         const accentStrongColor = readCssVar(
@@ -153,7 +161,7 @@
           const { OBJLoader } = await import(
             "three/examples/jsm/loaders/OBJLoader.js"
           );
-          const loader = new OBJLoader();
+          const loader = new OBJLoader(manager);
           const object = await loader.loadAsync(src);
           if (disposed) return;
           scene.add(object);
@@ -162,7 +170,7 @@
           const { FBXLoader } = await import(
             "three/examples/jsm/loaders/FBXLoader.js"
           );
-          const loader = new FBXLoader();
+          const loader = new FBXLoader(manager);
           const object = await loader.loadAsync(src);
           if (disposed) return;
           scene.add(object);
@@ -171,7 +179,7 @@
           const { STLLoader } = await import(
             "three/examples/jsm/loaders/STLLoader.js"
           );
-          const loader = new STLLoader();
+          const loader = new STLLoader(manager);
           const geometry = await loader.loadAsync(src);
           if (disposed) return;
           const material = new THREE.MeshStandardMaterial({
@@ -186,7 +194,7 @@
           const { GLTFLoader } = await import(
             "three/examples/jsm/loaders/GLTFLoader.js"
           );
-          const loader = new GLTFLoader();
+          const loader = new GLTFLoader(manager);
           const gltf = await loader.loadAsync(src);
           if (disposed) return;
           scene.add(gltf.scene);

@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { env } from "$env/dynamic/private";
+const env = process.env;
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText, Output } from "ai";
 import { z } from "zod";
@@ -113,9 +113,9 @@ function applyEnvOverrides(config: AiConfig): AiConfig {
 async function ensureConfigFile(): Promise<void> {
   await mkdir(dataRoot, { recursive: true });
   try {
-    await readFile(configPath, "utf8");
-  } catch {
-    await writeFile(configPath, JSON.stringify(defaultConfig, null, 2), "utf8");
+    await writeFile(configPath, JSON.stringify(defaultConfig, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
 }
 
@@ -312,7 +312,6 @@ export async function generateAutoMetadata(params: {
       disableThinking: config.disableThinking,
       reasoningEffortRequested: reasoningRequested,
       category: params.category,
-      fileName: params.originalName,
     });
 
     const runGeneration = async (withReasoningEffort: boolean) => {
@@ -344,13 +343,14 @@ export async function generateAutoMetadata(params: {
       });
 
       return generateText({
-        model: provider(config.model),
+        model: provider.chat(config.model),
+        telemetry: { isEnabled: false, recordInputs: false, recordOutputs: false },
         output: Output.object({ schema: metadataSchema }),
         temperature: config.temperature,
         maxRetries: 1,
         abortSignal: controller.signal,
         providerOptions,
-        system:
+        instructions:
           "You generate asset metadata. You MUST follow the user's output contract exactly and return only valid JSON with keys tags and description.",
         prompt,
       });
@@ -401,7 +401,7 @@ export async function generateAutoMetadata(params: {
       model: config.model,
       disableThinking: config.disableThinking,
       reasoningEffortRequested: config.reasoningEffort || "(unset)",
-      error: error instanceof Error ? error.message : String(error),
+      error: "Upstream AI request failed",
       elapsedMs: elapsedMs(),
     });
     return {

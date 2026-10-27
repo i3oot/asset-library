@@ -26,7 +26,7 @@ A simple **self-hosted asset library** for your game development needs, availabl
   - 🧠 Fuzzy search using Fuse.js
 
 - 🧬 File deduplication using hashes
-- 📁 Built-in SQLite metadata storage (no external database needed)
+- 📁 Configurable SQLite or PostgreSQL metadata storage (SQLite by default)
 
 🚧 Currently not available
 
@@ -140,6 +140,56 @@ keeps the existing file key. To remove a file key, clear it in `data/ai-config.j
 Environment overrides are used at runtime and are never copied into that file.
 For shared instances, set `AI_CONFIG_READONLY=true` alongside your secret-backed
 `AI_API_KEY` to prevent users from changing the destination of AI requests.
+
+# PostgreSQL and SQLite
+
+Set `DATABASE_BACKEND=sqlite` (the default) to use `data/assets.db`, or
+`DATABASE_BACKEND=postgres` plus a secret-managed `DATABASE_URL` for PostgreSQL.
+An invalid backend or missing PostgreSQL URI fails explicitly; there is no silent
+fallback. Database queries use bound parameters with both backends.
+Use a TLS-verified URI (`sslmode=verify-full&sslrootcert=/path/to/ca.crt`) outside
+an isolated local development environment. Connection strings must not be committed.
+
+The database stores metadata. Uploaded files and AI settings still live under
+`data/`, so back up the files and metadata consistently. PostgreSQL alone does not
+make the application safe to run with multiple replicas or provide S3 storage.
+
+To migrate an existing SQLite library:
+
+1. Stop application writers and back up `data/` and the target PostgreSQL database.
+2. Supply `DATABASE_URL` securely through your environment, then run
+   `node scripts/migrate-sqlite-to-postgres.mjs /path/to/data/assets.db` with Node 24+.
+3. The migration opens SQLite read-only, requires an empty PostgreSQL assets table,
+   and copies all metadata in one transaction. It verifies every copied field
+   before committing. It refuses a nonempty target; rerunning does not overwrite it.
+4. Preserve the same uploaded files, set `DATABASE_BACKEND=postgres`, and start
+   the app. Check counts, previews, downloads, edits and backups before retiring
+   the SQLite copy. The tool does not copy files or change the source database.
+
+SQLite's older `assets.json` import remains supported. Switching database backends
+does not automatically import SQLite; use the explicit migration above.
+
+# Privacy and security
+
+Icons and fonts are bundled locally. There is no analytics or error-reporting
+service in the app. The browser CSP permits connections only to the app's origin;
+3D previews reject references to remote resources. AI SDK telemetry and input/output
+recording are explicitly disabled. AI requests still send the selected asset content
+to the endpoint you configure for metadata generation; disabling telemetry does not
+make a cloud AI provider local. Set `AI_ENABLED=false` to disable AI requests.
+
+All library users share modification rights; deploy behind authentication and an
+explicit access policy. AI settings should be locked with `AI_CONFIG_READONLY=true`
+when a gateway credential is injected through the environment. Uploaded file
+responses are sandboxed, MIME sniffing is disabled, API responses are not publicly
+cached, source links allow only HTTP(S), and cross-origin mutations are rejected.
+
+Node 24 LTS is the container/CI runtime. Runtime and build dependencies are pinned
+in the manifest and lockfile. TypeScript stays on 6 because the current framework
+and checker require it; Node types track the supported Node 24 runtime.
+Run `npm run check` and `npm test`. Set `TEST_DATABASE_URL` to a dedicated disposable
+PostgreSQL database to include PostgreSQL tests (these tests delete its assets).
+CI runs both backends. `npm audit` checks known advisories, not every security risk.
 
 # Contributing
 

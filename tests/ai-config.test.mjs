@@ -7,7 +7,7 @@ import path from 'node:path';
 import { once } from 'node:events';
 import { test } from 'node:test';
 
-const build = path.resolve('build/index.js');
+const build = path.resolve('server.mjs');
 async function start(t, overrides = {}) {
   const cwd = await mkdtemp(path.join(tmpdir(), 'asset-library-test-'));
   await mkdir(path.join(cwd, 'data'));
@@ -21,9 +21,9 @@ async function start(t, overrides = {}) {
   const port = socket.address().port;
   await new Promise(resolve => socket.close(resolve));
   const url = `http://127.0.0.1:${port}`;
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AI_')));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AI_') && !key.startsWith('DATABASE_')));
   const child = spawn(process.execPath, [build], {
-    cwd, env: { ...env, HOST: '127.0.0.1', PORT: String(port), ORIGIN: url, ...overrides },
+    cwd, env: { ...env, HOST: '127.0.0.1', PORT: String(port), ORIGIN: url, PROTOCOL_HEADER: 'x-forwarded-proto', ...overrides },
     stdio: 'ignore',
   });
   t.after(async () => {
@@ -43,7 +43,7 @@ async function start(t, overrides = {}) {
   return {
     get: async () => (await fetch(`${url}/api/integrations/ai`)).json(),
     patch: data => fetch(`${url}/api/integrations/ai`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json', Origin: url },
+      method: 'PATCH', headers: { 'Content-Type': 'application/json', Origin: url, 'X-Forwarded-Proto': 'http' },
       body: JSON.stringify(data),
     }),
     file: async () => JSON.parse(await readFile(path.join(cwd, 'data/ai-config.json'), 'utf8')),

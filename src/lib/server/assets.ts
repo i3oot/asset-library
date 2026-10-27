@@ -1,7 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+import { createDatabase, type Database } from "$lib/server/database";
 import { TextDecoder } from "node:util";
 import type {
   AssetCategory,
@@ -9,11 +9,11 @@ import type {
   AssetRecord,
   AssetView,
 } from "$lib/types";
+import { safeSourceUrl } from "$lib/safe-url";
 import { generateAutoMetadata } from "$lib/server/ai";
 
 const dataRoot = path.join(process.cwd(), "data");
 const uploadsDir = path.join(dataRoot, "uploads");
-const dbPath = path.join(dataRoot, "assets.db");
 const metadataPath = path.join(dataRoot, "assets.json");
 
 const modelExtensions = new Set([
@@ -85,7 +85,7 @@ type AssetRow = {
   height: number | null;
 };
 
-let db: DatabaseSync | undefined;
+let db: Promise<Database> | undefined;
 let storageReady: Promise<void> | undefined;
 
 export class DuplicateAssetError extends Error {
@@ -103,8 +103,8 @@ function computeAssetHash(bytes: Uint8Array | Buffer): string {
 }
 
 async function ensureAssetHashes(): Promise<void> {
-  const database = getDb();
-  const rows = database
+  const database = await getDb();
+  const rows = await database
     .prepare(
       "SELECT id, stored_name FROM assets WHERE hash IS NULL OR TRIM(hash) = ''",
     )
@@ -119,50 +119,18 @@ async function ensureAssetHashes(): Promise<void> {
   );
   for (const row of rows) {
     try {
-      const fileBytes = await readFile(path.join(uploadsDir, row.stored_name));
-      updateHash.run(computeAssetHash(fileBytes), row.id);
+      const fileBytes = await readFile(getStoredFilePath(row.stored_name));
+      await updateHash.run(computeAssetHash(fileBytes), row.id);
     } catch {
       // Ignore missing files and keep legacy records untouched.
     }
   }
 }
 
-function getDb(): DatabaseSync {
-  if (db) {
-    return db;
+function getDb(): Promise<Database> {
+  if (!db) {
+    db = createDatabase().catch((error) => { db = undefined; throw error; });
   }
-
-  db = new DatabaseSync(dbPath);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA synchronous = NORMAL");
-  db.exec("PRAGMA busy_timeout = 5000");
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS assets (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL,
-      tags_json TEXT NOT NULL,
-      licenses_json TEXT NOT NULL,
-      source_url TEXT NOT NULL,
-      metadata_edited INTEGER NOT NULL,
-      upload_date TEXT NOT NULL,
-      original_name TEXT NOT NULL,
-      stored_name TEXT NOT NULL,
-      file_type TEXT NOT NULL,
-      hash TEXT,
-      mime_type TEXT NOT NULL,
-      size INTEGER NOT NULL,
-      category TEXT NOT NULL,
-      preview_kind TEXT NOT NULL,
-      width INTEGER,
-      height INTEGER
-    );
-  `);
-  db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_assets_upload_date ON assets(upload_date DESC)",
-  );
-  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_hash ON assets(hash)");
-
   return db;
 }
 
@@ -198,7 +166,7 @@ function normalizeImportedRecord(record: AssetRecord): AssetRecord {
         : undefined,
     description:
       typeof record.description === "string" ? record.description.trim() : "",
-    sourceUrl: typeof record.sourceUrl === "string" ? record.sourceUrl : "",
+    sourceUrl: safeSourceUrl(typeof record.sourceUrl === "string" ? record.sourceUrl : ""),
     licenses:
       normalizedLicenses.length > 0 ? normalizedLicenses : [DEFAULT_LICENSE],
     metadataEdited: record.metadataEdited ?? true,
@@ -227,7 +195,7 @@ function rowToAssetRecord(row: AssetRow): AssetRecord {
       const parsed = parseStringArray(row.licenses_json);
       return parsed.length > 0 ? parsed : [DEFAULT_LICENSE];
     })(),
-    sourceUrl: row.source_url,
+    sourceUrl: safeSourceUrl(row.source_url),
     metadataEdited: Boolean(row.metadata_edited),
     uploadDate: row.upload_date,
     originalName: row.original_name,
@@ -253,8 +221,8 @@ function rowToAssetRecord(row: AssetRow): AssetRecord {
   };
 }
 
-function insertRecord(database: DatabaseSync, record: AssetRecord): void {
-  database
+async function insertRecord(database: Database, record: AssetRecord, ignoreConflict = false): Promise<void> {
+  await database
     .prepare(
       `
         INSERT INTO assets (
@@ -296,6 +264,7 @@ function insertRecord(database: DatabaseSync, record: AssetRecord): void {
           @width,
           @height
         )
+        ${ignoreConflict ? "ON CONFLICT DO NOTHING" : ""}
       `,
     )
     .run({
@@ -321,9 +290,9 @@ function insertRecord(database: DatabaseSync, record: AssetRecord): void {
 }
 
 async function migrateLegacyJsonIfNeeded(
-  database: DatabaseSync,
+  database: Database,
 ): Promise<void> {
-  const countResult = database
+  const countResult = await database
     .prepare("SELECT COUNT(*) AS count FROM assets")
     .get() as { count: number };
   if (Number(countResult.count) > 0) {
@@ -359,20 +328,11 @@ async function migrateLegacyJsonIfNeeded(
     })
     .map((entry) => normalizeImportedRecord(entry));
 
-  database.exec("BEGIN IMMEDIATE");
-  try {
+  await database.transaction(async (transaction) => {
     for (const record of records) {
-      try {
-        insertRecord(database, record);
-      } catch {
-        // Skip malformed or duplicate legacy entries during migration.
-      }
+      await insertRecord(transaction, record, true);
     }
-    database.exec("COMMIT");
-  } catch (error) {
-    database.exec("ROLLBACK");
-    throw error;
-  }
+  });
 }
 
 async function ensureStorage(): Promise<void> {
@@ -380,7 +340,7 @@ async function ensureStorage(): Promise<void> {
     storageReady = (async () => {
       await mkdir(dataRoot, { recursive: true });
       await mkdir(uploadsDir, { recursive: true });
-      const database = getDb();
+      const database = await getDb();
       await migrateLegacyJsonIfNeeded(database);
     })();
   }
@@ -464,8 +424,8 @@ function getFileType(fileName: string, mimeType: string): string {
 
 export async function readAssets(): Promise<AssetRecord[]> {
   await ensureStorage();
-  const database = getDb();
-  const rows = database
+  const database = await getDb();
+  const rows = await database
     .prepare(
       `
         SELECT
@@ -517,10 +477,10 @@ export async function saveAsset(params: {
   bytes: Uint8Array;
 }): Promise<AssetRecord> {
   await ensureStorage();
-  const database = getDb();
+  const database = await getDb();
   const incomingHash = computeAssetHash(params.bytes);
   await ensureAssetHashes();
-  const duplicateRow = database
+  const duplicateRow = await database
     .prepare(
       `
         SELECT
@@ -555,7 +515,7 @@ export async function saveAsset(params: {
 
   const id = randomUUID();
   const ext = path.extname(params.fileName);
-  const storedName = `${id}${ext}`;
+  const storedName = `${id}-${randomUUID()}${ext}`;
   const category = getCategory(params.fileName, params.mimeType);
   const previewKind = getPreviewKind(
     category,
@@ -624,7 +584,7 @@ export async function saveAsset(params: {
   const normalizedLicenses = (params.licenses ?? [])
     .map((license) => license.trim())
     .filter(Boolean);
-  const normalizedSourceUrl = params.sourceUrl?.trim() ?? "";
+  const normalizedSourceUrl = safeSourceUrl(params.sourceUrl ?? "");
   const hasInitialMetadata =
     normalizedSourceUrl.length > 0 || normalizedLicenses.length > 0;
 
@@ -656,14 +616,14 @@ export async function saveAsset(params: {
   await writeFile(path.join(uploadsDir, storedName), params.bytes);
 
   try {
-    insertRecord(database, record);
+    await insertRecord(database, record);
   } catch (errorValue) {
     await rm(path.join(uploadsDir, storedName), { force: true });
 
     const message =
       errorValue instanceof Error ? errorValue.message : String(errorValue);
-    if (message.includes("UNIQUE constraint failed: assets.hash")) {
-      const existing = database
+    if ((message.includes("UNIQUE constraint failed: assets.hash") || (errorValue as { code?: string }).code === "23505")) {
+      const existing = await database
         .prepare(
           `
             SELECT
@@ -705,8 +665,8 @@ export async function getAssetById(
   id: string,
 ): Promise<AssetRecord | undefined> {
   await ensureStorage();
-  const database = getDb();
-  const row = database
+  const database = await getDb();
+  const row = await database
     .prepare(
       `
         SELECT
@@ -749,8 +709,8 @@ export async function updateAssetMetadata(
   },
 ): Promise<AssetRecord | undefined> {
   await ensureStorage();
-  const database = getDb();
-  const result = database
+  const database = await getDb();
+  const result = await database
     .prepare(
       `
         UPDATE assets
@@ -770,7 +730,7 @@ export async function updateAssetMetadata(
       description: updates.description,
       tags_json: JSON.stringify(updates.tags),
       licenses_json: JSON.stringify(updates.licenses),
-      source_url: updates.sourceUrl,
+      source_url: safeSourceUrl(updates.sourceUrl),
     });
 
   if (result.changes === 0) {
@@ -790,10 +750,10 @@ export async function replaceAssetFile(
   },
 ): Promise<AssetRecord | undefined> {
   await ensureStorage();
-  const database = getDb();
+  const database = await getDb();
   await ensureAssetHashes();
 
-  const currentRow = database
+  const currentRow = await database
     .prepare(
       `
         SELECT
@@ -826,7 +786,7 @@ export async function replaceAssetFile(
   }
 
   const incomingHash = computeAssetHash(replacement.bytes);
-  const duplicateRow = database
+  const duplicateRow = await database
     .prepare(
       `
         SELECT
@@ -861,7 +821,7 @@ export async function replaceAssetFile(
 
   const current = rowToAssetRecord(currentRow);
   const ext = path.extname(replacement.fileName);
-  const storedName = `${id}${ext}`;
+  const storedName = `${id}-${randomUUID()}${ext}`;
   const category = getCategory(replacement.fileName, replacement.mimeType);
   const previewKind = getPreviewKind(
     category,
@@ -889,13 +849,10 @@ export async function replaceAssetFile(
   }
 
   await writeFile(path.join(uploadsDir, storedName), replacement.bytes);
-  if (storedName !== current.storedName) {
-    await rm(path.join(uploadsDir, current.storedName), { force: true });
-  }
 
   const uploadDate = new Date().toISOString();
   try {
-    database
+    await database
       .prepare(
         `
           UPDATE assets
@@ -933,10 +890,11 @@ export async function replaceAssetFile(
         upload_date: uploadDate,
       });
   } catch (errorValue) {
+    await rm(getStoredFilePath(storedName), { force: true });
     const message =
       errorValue instanceof Error ? errorValue.message : String(errorValue);
-    if (message.includes("UNIQUE constraint failed: assets.hash")) {
-      const existing = database
+    if ((message.includes("UNIQUE constraint failed: assets.hash") || (errorValue as { code?: string }).code === "23505")) {
+      const existing = await database
         .prepare(
           `
             SELECT
@@ -971,13 +929,14 @@ export async function replaceAssetFile(
     throw errorValue;
   }
 
+  await rm(getStoredFilePath(current.storedName), { force: true });
   return getAssetById(id);
 }
 
 export async function deleteAsset(id: string): Promise<boolean> {
   await ensureStorage();
-  const database = getDb();
-  const row = database
+  const database = await getDb();
+  const row = await database
     .prepare("SELECT stored_name FROM assets WHERE id = ? LIMIT 1")
     .get(id) as { stored_name: string } | undefined;
 
@@ -985,11 +944,14 @@ export async function deleteAsset(id: string): Promise<boolean> {
     return false;
   }
 
-  database.prepare("DELETE FROM assets WHERE id = ?").run(id);
-  await rm(path.join(uploadsDir, row.stored_name), { force: true });
+  await database.prepare("DELETE FROM assets WHERE id = ?").run(id);
+  await rm(getStoredFilePath(row.stored_name), { force: true });
   return true;
 }
 
 export function getStoredFilePath(storedName: string): string {
+  if (!storedName || storedName !== path.basename(storedName) || /[\\/\0]/.test(storedName)) {
+    throw new Error("Invalid stored asset name");
+  }
   return path.join(uploadsDir, storedName);
 }

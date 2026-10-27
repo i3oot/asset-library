@@ -41,7 +41,7 @@ CMD ["node", "server.mjs"]
 # Run model decoding in a separate, credential-free, network-isolated workload.
 FROM runner AS thumbnail-renderer
 USER root
-RUN apk add --no-cache chromium
+RUN apk add --no-cache chromium chromium-swiftshader
 USER node
 ENV PORT=8080
 CMD ["node", "renderer/server.mjs"]

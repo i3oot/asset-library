@@ -20,7 +20,7 @@ const server = createServer(async (request, response) => {
     }
     stage = "launch";
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? '/usr/bin/chromium', headless: true, env: { ...process.env, XDG_CONFIG_HOME: '/tmp/config', XDG_CACHE_HOME: '/tmp/cache' },
-      args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--no-first-run'] });
+      args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--no-first-run'] });
     stage = "context";
     const context = await browser.newContext({ viewport: { width: 320, height: 320 }, serviceWorkers: 'block', javaScriptEnabled: true });
     await context.route('**/*', route => route.abort());

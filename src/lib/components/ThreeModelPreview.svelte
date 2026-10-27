@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Thumbnail from "$lib/components/Thumbnail.svelte";
   import { onMount } from "svelte";
   import type { Mesh, Object3D } from "three";
 
@@ -6,12 +7,16 @@
     src,
     fileName = "",
     alt = "3D model preview",
-  }: { src: string; fileName?: string; alt?: string } = $props();
+    thumbnailUrl,
+    thumbhash,
+  }: { src: string; fileName?: string; alt?: string; thumbnailUrl?: string; thumbhash?: string } = $props();
 
   let container = $state<HTMLDivElement | null>(null);
   let canvas = $state<HTMLCanvasElement | null>(null);
   let isInView = $state(false);
   let errorMessage = $state("");
+  let renderReady = $state(false);
+  let interactive = $state(false);
   let themeKey = $state("");
 
   function fileExt(name: string): string {
@@ -85,7 +90,7 @@
   $effect(() => {
     // Re-run renderer setup on theme changes so model lighting and grid colors update.
     themeKey;
-    if (!isInView || !canvas) return;
+    if (!interactive || !isInView || !canvas) return;
 
     const localCanvas = canvas;
     if (!localCanvas) return;
@@ -93,6 +98,7 @@
     let cleanup = () => {};
     let disposed = false;
     errorMessage = "";
+    renderReady = false;
 
     const start = async () => {
       try {
@@ -219,6 +225,7 @@
           frame = requestAnimationFrame(animate);
         };
         animate();
+        renderReady = true;
 
         cleanup = () => {
           cancelAnimationFrame(frame);
@@ -255,17 +262,29 @@
 </script>
 
 <div class="three-preview" aria-label={alt} bind:this={container}>
+  {#if thumbnailUrl || thumbhash}
+    <div class="poster" class:hidden={interactive && isInView && renderReady && !errorMessage}>
+      <Thumbnail src={thumbnailUrl} {thumbhash} {alt} />
+    </div>
+  {/if}
   {#if errorMessage}
     <p>{errorMessage}</p>
-  {:else if isInView}
+  {:else if interactive && isInView}
     <canvas bind:this={canvas}></canvas>
-  {:else}
-    <p>3D preview paused offscreen.</p>
+  {:else if !thumbnailUrl}
+    <p>3D preview available.</p>
+  {/if}
+  {#if !interactive}
+    <button class="explore" type="button" onclick={() => { interactive = true; }}>Explore 3D</button>
   {/if}
 </div>
 
 <style>
+  .explore { position: absolute; right: 0.5rem; bottom: 0.5rem; z-index: 1; padding: 0.4rem 0.6rem; border: 1px solid var(--borderHoverColor); border-radius: 6px; background: var(--surface-inset); color: var(--app-text); cursor: pointer; }
+  .poster { position: absolute; inset: 0; pointer-events: none; }
+  .poster.hidden { display: none; }
   .three-preview {
+    position: relative;
     width: 100%;
     height: 100%;
     border-radius: 12px;

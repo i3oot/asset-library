@@ -8,7 +8,7 @@ export async function migrateSqliteToPostgres(sqlitePath, connectionString) {
   try {
     target = await createDatabase({ backend: 'postgres', connectionString });
     const rows = source.prepare('SELECT * FROM assets').all();
-    const columns = ['id', 'title', 'description', 'tags_json', 'licenses_json', 'source_url', 'metadata_edited', 'upload_date', 'original_name', 'stored_name', 'file_type', 'hash', 'mime_type', 'size', 'category', 'preview_kind', 'width', 'height'];
+    const columns = ['id', 'title', 'description', 'tags_json', 'licenses_json', 'source_url', 'metadata_edited', 'upload_date', 'original_name', 'stored_name', 'file_type', 'hash', 'thumbhash', 'mime_type', 'size', 'category', 'preview_kind', 'width', 'height'];
     await target.transaction(async transaction => {
       // Maintenance mode is required. Lock against concurrent app writes too.
       await transaction.prepare('LOCK TABLE assets IN ACCESS EXCLUSIVE MODE').run();

@@ -11,7 +11,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   if (event.url.pathname.startsWith('/api/')) {
     response.headers.set('Cache-Control', 'private, no-store');
-    if (/^\/api\/assets\/[^/]+\/(file|download)$/.test(event.url.pathname)) {
+    if (/^\/api\/assets\/[^/]+\/(file|download|thumbnail)$/.test(event.url.pathname)) {
       response.headers.set('Content-Security-Policy', "sandbox; default-src 'none'; frame-ancestors 'none'");
     }
   }

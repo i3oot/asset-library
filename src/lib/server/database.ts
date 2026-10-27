@@ -21,7 +21,7 @@ const schema = `
     tags_json TEXT NOT NULL, licenses_json TEXT NOT NULL, source_url TEXT NOT NULL,
     metadata_edited INTEGER NOT NULL, upload_date TEXT NOT NULL,
     original_name TEXT NOT NULL, stored_name TEXT NOT NULL, file_type TEXT NOT NULL,
-    hash TEXT, mime_type TEXT NOT NULL, size BIGINT NOT NULL,
+    hash TEXT, thumbhash TEXT, mime_type TEXT NOT NULL, size BIGINT NOT NULL,
     category TEXT NOT NULL, preview_kind TEXT NOT NULL, width INTEGER, height INTEGER
   );
   CREATE INDEX IF NOT EXISTS idx_assets_upload_date ON assets(upload_date DESC);
@@ -56,6 +56,8 @@ export async function createDatabase(options: {
     const sqlite = new DatabaseSync(filename);
     sqlite.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;");
     sqlite.exec(schema);
+    const columns = sqlite.prepare("PRAGMA table_info(assets)").all() as Array<{ name: string }>;
+    if (!columns.some(column => column.name === "thumbhash")) sqlite.exec("ALTER TABLE assets ADD COLUMN thumbhash TEXT");
     const database: Database = {
       prepare(sql) {
         const statement = sqlite.prepare(sql);
@@ -110,7 +112,7 @@ export async function createDatabase(options: {
     },
     close: async () => pool.end(),
   });
-  try { await pool.query(schema); }
+  try { await pool.query(schema); await pool.query("ALTER TABLE assets ADD COLUMN IF NOT EXISTS thumbhash TEXT"); }
   catch (error) { await pool.end(); throw error; }
   return wrap(pool);
 }

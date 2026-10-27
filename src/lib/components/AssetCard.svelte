@@ -2,6 +2,7 @@
   import { safeSourceUrl } from "$lib/safe-url";
   import Icon from "$lib/components/Icon.svelte";
   import type { AssetCategory, AssetView } from "$lib/types";
+  import Thumbnail from "$lib/components/Thumbnail.svelte";
   import AudioPreview from "$lib/components/AudioPreview.svelte";
   import Button from "$lib/components/Button.svelte";
   import ThreeModelPreview from "$lib/components/ThreeModelPreview.svelte";
@@ -44,12 +45,7 @@
       </div>
     {:else if asset.previewKind === "image"}
       <div class="assetlib-image-wrap">
-        <img
-          src={asset.fileUrl}
-          alt={asset.title}
-          loading="lazy"
-          draggable="false"
-        />
+        <Thumbnail src={asset.thumbnailUrl ?? asset.fileUrl} thumbhash={asset.thumbhash} alt={asset.title} />
         {#if asset.width && asset.height}
           <div class="assetlib-additionalInfo" aria-hidden="true">
             {asset.width}×{asset.height}
@@ -60,6 +56,8 @@
       <ThreeModelPreview
         src={asset.fileUrl}
         fileName={asset.originalName}
+        thumbnailUrl={asset.thumbnailUrl}
+        thumbhash={asset.thumbhash}
         alt={asset.title}
       />
     {:else if asset.previewKind === "text"}
@@ -302,17 +300,6 @@
   .assetlib-card:focus-within .assetlib-additionalInfo {
     opacity: 1;
     transform: translateY(0);
-  }
-
-  .assetlib-preview-layer img {
-    width: 100%;
-  }
-
-  .assetlib-preview-layer img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    background: var(--canvas-bg);
   }
 
   .assetlib-preview-layer pre {

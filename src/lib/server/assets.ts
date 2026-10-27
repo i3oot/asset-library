@@ -10,6 +10,7 @@ import type {
   AssetView,
 } from "$lib/types";
 import { safeSourceUrl } from "$lib/safe-url";
+import { generateAssetThumbnail } from "$lib/server/thumbnails";
 import { generateAutoMetadata } from "$lib/server/ai";
 
 const dataRoot = path.join(process.cwd(), "data");
@@ -77,6 +78,7 @@ type AssetRow = {
   stored_name: string;
   file_type: string;
   hash: string | null;
+  thumbhash: string | null;
   mime_type: string;
   size: number;
   category: string;
@@ -205,6 +207,7 @@ function rowToAssetRecord(row: AssetRow): AssetRecord {
         ? row.file_type.trim().toLowerCase()
         : getFileType(row.original_name, row.mime_type),
     hash: row.hash?.trim() || undefined,
+    thumbhash: row.thumbhash ?? undefined,
     mimeType: row.mime_type,
     size: Number(row.size),
     category,
@@ -238,6 +241,7 @@ async function insertRecord(database: Database, record: AssetRecord, ignoreConfl
           stored_name,
           file_type,
           hash,
+          thumbhash,
           mime_type,
           size,
           category,
@@ -257,6 +261,7 @@ async function insertRecord(database: Database, record: AssetRecord, ignoreConfl
           @stored_name,
           @file_type,
           @hash,
+          @thumbhash,
           @mime_type,
           @size,
           @category,
@@ -280,6 +285,7 @@ async function insertRecord(database: Database, record: AssetRecord, ignoreConfl
       stored_name: record.storedName,
       file_type: record.fileType,
       hash: record.hash ?? null,
+      thumbhash: record.thumbhash ?? null,
       mime_type: record.mimeType,
       size: record.size,
       category: record.category,
@@ -441,6 +447,7 @@ export async function readAssets(): Promise<AssetRecord[]> {
           stored_name,
           file_type,
           hash,
+          thumbhash,
           mime_type,
           size,
           category,
@@ -462,6 +469,7 @@ export function toAssetView(record: AssetRecord): AssetView {
     fileUrl: `/api/assets/${record.id}/file`,
     downloadUrl: `/api/assets/${record.id}/download`,
     textPreviewUrl: `/api/assets/${record.id}/text`,
+    thumbnailUrl: record.thumbhash ? `/api/assets/${record.id}/thumbnail` : undefined,
   };
 }
 
@@ -496,6 +504,7 @@ export async function saveAsset(params: {
           stored_name,
           file_type,
           hash,
+          thumbhash,
           mime_type,
           size,
           category,
@@ -588,6 +597,7 @@ export async function saveAsset(params: {
   const hasInitialMetadata =
     normalizedSourceUrl.length > 0 || normalizedLicenses.length > 0;
 
+  const thumbnail = await generateAssetThumbnail(params.bytes, previewKind, params.fileName).catch(() => undefined);
   const record: AssetRecord = {
     id,
     title: params.title,
@@ -605,6 +615,7 @@ export async function saveAsset(params: {
       params.mimeType || "application/octet-stream",
     ),
     hash: incomingHash,
+    thumbhash: thumbnail?.thumbhash,
     mimeType: params.mimeType || "application/octet-stream",
     size: params.size,
     category,
@@ -613,12 +624,12 @@ export async function saveAsset(params: {
     height,
   };
 
-  await writeFile(path.join(uploadsDir, storedName), params.bytes);
-
   try {
+    await writeFile(getStoredFilePath(storedName), params.bytes);
+    if (thumbnail) await writeFile(getThumbnailPath(storedName), thumbnail.bytes);
     await insertRecord(database, record);
   } catch (errorValue) {
-    await rm(path.join(uploadsDir, storedName), { force: true });
+    await deleteStoredFiles(storedName);
 
     const message =
       errorValue instanceof Error ? errorValue.message : String(errorValue);
@@ -639,6 +650,7 @@ export async function saveAsset(params: {
               stored_name,
               file_type,
               hash,
+              thumbhash,
               mime_type,
               size,
               category,
@@ -682,6 +694,7 @@ export async function getAssetById(
           stored_name,
           file_type,
           hash,
+          thumbhash,
           mime_type,
           size,
           category,
@@ -769,6 +782,7 @@ export async function replaceAssetFile(
           stored_name,
           file_type,
           hash,
+          thumbhash,
           mime_type,
           size,
           category,
@@ -802,6 +816,7 @@ export async function replaceAssetFile(
           stored_name,
           file_type,
           hash,
+          thumbhash,
           mime_type,
           size,
           category,
@@ -848,10 +863,12 @@ export async function replaceAssetFile(
     }
   }
 
-  await writeFile(path.join(uploadsDir, storedName), replacement.bytes);
+  const thumbnail = await generateAssetThumbnail(replacement.bytes, previewKind, replacement.fileName).catch(() => undefined);
 
   const uploadDate = new Date().toISOString();
   try {
+    await writeFile(getStoredFilePath(storedName), replacement.bytes);
+    if (thumbnail) await writeFile(getThumbnailPath(storedName), thumbnail.bytes);
     await database
       .prepare(
         `
@@ -861,6 +878,7 @@ export async function replaceAssetFile(
             stored_name = @stored_name,
             file_type = @file_type,
             hash = @hash,
+            thumbhash = @thumbhash,
             mime_type = @mime_type,
             size = @size,
             category = @category,
@@ -881,6 +899,7 @@ export async function replaceAssetFile(
           replacement.mimeType || "application/octet-stream",
         ),
         hash: incomingHash,
+        thumbhash: thumbnail?.thumbhash ?? null,
         mime_type: replacement.mimeType || "application/octet-stream",
         size: replacement.size,
         category,
@@ -890,7 +909,7 @@ export async function replaceAssetFile(
         upload_date: uploadDate,
       });
   } catch (errorValue) {
-    await rm(getStoredFilePath(storedName), { force: true });
+    await deleteStoredFiles(storedName);
     const message =
       errorValue instanceof Error ? errorValue.message : String(errorValue);
     if ((message.includes("UNIQUE constraint failed: assets.hash") || (errorValue as { code?: string }).code === "23505")) {
@@ -910,6 +929,7 @@ export async function replaceAssetFile(
               stored_name,
               file_type,
               hash,
+              thumbhash,
               mime_type,
               size,
               category,
@@ -929,7 +949,7 @@ export async function replaceAssetFile(
     throw errorValue;
   }
 
-  await rm(getStoredFilePath(current.storedName), { force: true });
+  await deleteStoredFiles(current.storedName);
   return getAssetById(id);
 }
 
@@ -945,7 +965,7 @@ export async function deleteAsset(id: string): Promise<boolean> {
   }
 
   await database.prepare("DELETE FROM assets WHERE id = ?").run(id);
-  await rm(getStoredFilePath(row.stored_name), { force: true });
+  await deleteStoredFiles(row.stored_name);
   return true;
 }
 
@@ -954,4 +974,15 @@ export function getStoredFilePath(storedName: string): string {
     throw new Error("Invalid stored asset name");
   }
   return path.join(uploadsDir, storedName);
+}
+
+export function getThumbnailPath(storedName: string): string {
+  return getStoredFilePath(storedName) + ".thumbnail.webp";
+}
+
+async function deleteStoredFiles(storedName: string): Promise<void> {
+  await Promise.all([
+    rm(getStoredFilePath(storedName), { force: true }),
+    rm(getThumbnailPath(storedName), { force: true }),
+  ]);
 }

@@ -169,6 +169,42 @@ To migrate an existing SQLite library:
 SQLite's older `assets.json` import remains supported. Switching database backends
 does not automatically import SQLite; use the explicit migration above.
 
+# Server-generated thumbnails and ThumbHash
+
+Image uploads generate a small WebP thumbnail and a compact ThumbHash placeholder
+on the server. Cards load the thumbnail rather than the original. GIF/animated
+images use the first frame; undecodable or oversized images retain their existing
+preview fallback. Decoding is limited to 64 megapixels and five seconds.
+
+3D posters are also generated on the server from the uploaded model bytes. Run
+the separate `thumbnail-renderer` Docker target, then set `MODEL_THUMBNAIL_URL`
+on the app to its private service URL. It supports self-contained GLB/GLTF, OBJ,
+STL and FBX. Missing external textures/buffers, unsupported formats, unavailable
+renderers, models over 64MiB and timed-out renders fall back gracefully. Neither
+posters nor hashes can be submitted through the public API: the thumbnail route
+is read-only, and metadata edits cannot set the hash.
+
+The renderer must be isolated from the app: no credentials, no uploaded-file
+volume, no service-account token, read-only root filesystem, temporary scratch
+space, and no network egress. Allow ingress only from the application. Chromium
+uses software rendering and runs without its own sandbox for container
+compatibility, so this separate workload isolation is required. Browser routing,
+CSP and loader rules also block model references to network resources. Each job
+gets a fresh browser and a 30-second deadline; renderer concurrency is one.
+Do not expose its `/render` endpoint to users.
+
+Thumbnail files live beside originals as `.thumbnail.webp` sidecars; the database
+stores their ThumbHash. Replacements regenerate them; deletion removes both files.
+Existing database schemas gain a nullable `thumbhash` column automatically.
+In maintenance mode, run `node scripts/backfill-thumbnails.mjs` from the library's
+working directory with the same database/renderer settings to process existing
+assets. Backfill skips files over 64MiB and reports unavailable/unsupported files.
+Preserve thumbnail sidecars when copying uploaded files during a database migration.
+
+Audio keeps its waveform preview, and code/text keeps its text preview. Those
+have no raster placeholder to hash. Live 3D viewing loads only after choosing Explore 3D; cards otherwise use the
+server poster; if rendering fails in the browser, the server poster stays visible.
+
 # Privacy and security
 
 Icons and fonts are bundled locally. There is no analytics or error-reporting
@@ -187,7 +223,8 @@ cached, source links allow only HTTP(S), and cross-origin mutations are rejected
 Node 24 LTS is the container/CI runtime. Runtime and build dependencies are pinned
 in the manifest and lockfile. TypeScript stays on 6 because the current framework
 and checker require it; Node types track the supported Node 24 runtime.
-Run `npm run check` and `npm test`. Set `TEST_DATABASE_URL` to a dedicated disposable
+Run `npm run check` and `npm test`. Set `TEST_CHROMIUM_PATH` to a Chromium binary
+to include the actual server-rendered model test. Set `TEST_DATABASE_URL` to a dedicated disposable
 PostgreSQL database to include PostgreSQL tests (these tests delete its assets).
 CI runs both backends. `npm audit` checks known advisories, not every security risk.
 

@@ -41,9 +41,14 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: Validate and test
+      - name: Install isolated renderer test browser
         run: |
           npm ci
+          npx playwright-core install --with-deps chromium
+          node --input-type=module -e "import { chromium } from 'playwright-core'; console.log('TEST_CHROMIUM_PATH=' + chromium.executablePath())" >> "$GITHUB_ENV"
+
+      - name: Validate and test
+        run: |
           npm run check
           npm test
 
@@ -88,6 +93,15 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          target: runner
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Build and push isolated model renderer
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: thumbnail-renderer
+          push: true
+          tags: ghcr.io/${{ github.repository }}-renderer:sha-${{ github.sha }}

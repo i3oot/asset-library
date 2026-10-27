@@ -20,6 +20,7 @@ export interface AssetRecord {
   storedName: string;
   fileType: string;
   hash?: string;
+  thumbhash?: string;
   mimeType: string;
   size: number;
   category: AssetCategory;
@@ -32,4 +33,5 @@ export interface AssetView extends AssetRecord {
   fileUrl: string;
   downloadUrl: string;
   textPreviewUrl: string;
+  thumbnailUrl?: string;
 }

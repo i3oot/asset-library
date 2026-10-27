@@ -1258,6 +1258,7 @@
           <span>API Key (optional)</span>
           <Input
             bind:value={aiConfig.apiKey}
+            type="password"
             placeholder={aiConfig.apiKeyConfigured ? "Key configured; leave blank to keep it" : "leave empty for local dev"}
           />
         </label>

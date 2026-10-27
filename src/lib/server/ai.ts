@@ -119,7 +119,7 @@ async function ensureConfigFile(): Promise<void> {
   }
 }
 
-export async function getAiConfig(): Promise<AiConfig> {
+async function readFileConfig(): Promise<AiConfig> {
   await ensureConfigFile();
   const raw = await readFile(configPath, "utf8");
   const parsed = JSON.parse(raw) as Partial<AiConfig>;
@@ -142,16 +142,41 @@ export async function getAiConfig(): Promise<AiConfig> {
     ),
   };
 
-  return applyEnvOverrides(fileConfig);
+  return fileConfig;
+}
+
+export async function getAiConfig(): Promise<AiConfig> {
+  return applyEnvOverrides(await readFileConfig());
+}
+
+export function isAiConfigReadOnly(): boolean {
+  return parseEnvBoolean(env.AI_CONFIG_READONLY) === true;
+}
+
+export function publicAiConfig(config: AiConfig) {
+  return {
+    ...config,
+    apiKey: "",
+    apiKeyConfigured: Boolean(config.apiKey),
+    readOnly: isAiConfigReadOnly(),
+  };
 }
 
 export async function updateAiConfig(
   updates: Partial<AiConfig>,
 ): Promise<AiConfig> {
-  const current = await getAiConfig();
+  if (isAiConfigReadOnly()) {
+    throw new Error("AI configuration is managed by the server");
+  }
+  const current = await readFileConfig();
+  // Never persist environment overrides into the writable data directory.
+  const definedUpdates = Object.fromEntries(
+    Object.entries(updates).filter(([, value]) => value !== undefined),
+  );
   const merged: AiConfig = {
     ...current,
-    ...updates,
+    ...definedUpdates,
+    apiKey: updates.apiKey || current.apiKey,
     baseUrl: (updates.baseUrl ?? current.baseUrl).trim(),
     model: (updates.model ?? current.model).trim(),
     timeoutMs: Math.max(1_000, updates.timeoutMs ?? current.timeoutMs),
@@ -166,7 +191,7 @@ export async function updateAiConfig(
   };
 
   await writeFile(configPath, JSON.stringify(merged, null, 2), "utf8");
-  return merged;
+  return applyEnvOverrides(merged);
 }
 
 function sanitizeTag(value: string): string {

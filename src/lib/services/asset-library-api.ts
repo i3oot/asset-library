@@ -5,6 +5,8 @@ export type AiConfig = {
   baseUrl: string;
   model: string;
   apiKey: string;
+  apiKeyConfigured?: boolean;
+  readOnly?: boolean;
   timeoutMs: number;
   temperature: number;
   disableThinking: boolean;

@@ -1,12 +1,15 @@
 import { json, type RequestHandler } from "@sveltejs/kit";
-import { getAiConfig, updateAiConfig, type AiConfig } from "$lib/server/ai";
+import { getAiConfig, updateAiConfig, publicAiConfig, isAiConfigReadOnly, type AiConfig } from "$lib/server/ai";
 
 export const GET: RequestHandler = async () => {
   const config = await getAiConfig();
-  return json({ config });
+  return json({ config: publicAiConfig(config) });
 };
 
 export const PATCH: RequestHandler = async ({ request }) => {
+  if (isAiConfigReadOnly()) {
+    return json({ error: "AI configuration is managed by the server" }, { status: 403 });
+  }
   const body = (await request.json()) as Partial<AiConfig>;
 
   const next = await updateAiConfig({
@@ -31,5 +34,5 @@ export const PATCH: RequestHandler = async ({ request }) => {
         : undefined,
   });
 
-  return json({ config: next });
+  return json({ config: publicAiConfig(next) });
 };

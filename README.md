@@ -127,11 +127,19 @@ Place this config in `data/ai-config.json`:
 - `AI_BASE_URL` (e.g. `http://127.0.0.1:1234`)
 - `AI_MODEL` (loaded model name)
 - `AI_API_KEY` (optional 🔑)
+- `AI_CONFIG_READONLY` (`true` / `false`, default `false`; reject UI/API changes when server-managed)
+
 - `AI_TIMEOUT_MS` (e.g. `12000`)
 - `AI_TEMPERATURE` (e.g. `0.2`, range `0` to `2`)
 - `AI_DISABLE_THINKING` (`true` / `false`, forces `reasoningEffort=none`)
 - `AI_REASONING_EFFORT` (`none` | `minimal` | `low` | `medium` | `high` | `xhigh`)
 - `AI_CUSTOM_INSTRUCTION` (optional prompt addition ✏️)
+
+The settings API never returns the API key. An empty API key in a settings update
+keeps the existing file key. To remove a file key, clear it in `data/ai-config.json`.
+Environment overrides are used at runtime and are never copied into that file.
+For shared instances, set `AI_CONFIG_READONLY=true` alongside your secret-backed
+`AI_API_KEY` to prevent users from changing the destination of AI requests.
 
 # Contributing
 

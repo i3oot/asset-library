@@ -132,7 +132,7 @@
   let showBackToTop = false;
   let editDialogRef: { requestClose: () => void } | null = null;
   let aiDialogRef: { requestClose: () => void } | null = null;
-  let aiConfig = {
+  let aiConfig: AiConfig = {
     enabled: false,
     baseUrl: "http://127.0.0.1:1234",
     model: "",
@@ -1232,81 +1232,86 @@
         description on upload.
       </p>
 
-      <label class="assetlib-toggle">
-        <input type="checkbox" bind:checked={aiConfig.enabled} />
-        <span>Enable auto metadata</span>
-      </label>
+      {#if aiConfig.readOnly}
+        <p class="assetlib-muted">AI settings are managed by the server.</p>
+      {/if}
+      <fieldset disabled={aiConfig.readOnly} style="border: 0; padding: 0; margin: 0; min-width: 0;">
+        <label class="assetlib-toggle">
+          <input type="checkbox" bind:checked={aiConfig.enabled} />
+          <span>Enable auto metadata</span>
+        </label>
 
-      <label class="assetlib-modal-label">
-        <span>Base URL</span>
-        <Input
-          bind:value={aiConfig.baseUrl}
-          placeholder="http://127.0.0.1:1234"
-        />
-      </label>
+        <label class="assetlib-modal-label">
+          <span>Base URL</span>
+          <Input
+            bind:value={aiConfig.baseUrl}
+            placeholder="http://127.0.0.1:1234"
+          />
+        </label>
 
-      <label class="assetlib-modal-label">
-        <span>Model</span>
-        <Input bind:value={aiConfig.model} placeholder="qwen2.5-7b-instruct" />
-      </label>
+        <label class="assetlib-modal-label">
+          <span>Model</span>
+          <Input bind:value={aiConfig.model} placeholder="qwen2.5-7b-instruct" />
+        </label>
 
-      <label class="assetlib-modal-label">
-        <span>API Key (optional)</span>
-        <Input
-          bind:value={aiConfig.apiKey}
-          placeholder="leave empty for local dev"
-        />
-      </label>
+        <label class="assetlib-modal-label">
+          <span>API Key (optional)</span>
+          <Input
+            bind:value={aiConfig.apiKey}
+            placeholder={aiConfig.apiKeyConfigured ? "Key configured; leave blank to keep it" : "leave empty for local dev"}
+          />
+        </label>
 
-      <label class="assetlib-modal-label">
-        <span>Timeout (ms)</span>
-        <Input
-          type="number"
-          min="1000"
-          step="500"
-          bind:value={aiConfig.timeoutMs}
-        />
-      </label>
+        <label class="assetlib-modal-label">
+          <span>Timeout (ms)</span>
+          <Input
+            type="number"
+            min="1000"
+            step="500"
+            bind:value={aiConfig.timeoutMs}
+          />
+        </label>
 
-      <label class="assetlib-modal-label">
-        <span>Temperature</span>
-        <Input
-          type="number"
-          min="0"
-          max="2"
-          step="0.1"
-          bind:value={aiConfig.temperature}
-        />
-      </label>
+        <label class="assetlib-modal-label">
+          <span>Temperature</span>
+          <Input
+            type="number"
+            min="0"
+            max="2"
+            step="0.1"
+            bind:value={aiConfig.temperature}
+          />
+        </label>
 
-      <label class="assetlib-modal-label">
-        <span>Reasoning Effort</span>
-        <SelectField
-          bind:value={aiConfig.reasoningEffort}
-          options={AI_REASONING_EFFORT_OPTIONS}
-          disabled={aiConfig.disableThinking}
-          minWidth="100%"
-        />
-      </label>
+        <label class="assetlib-modal-label">
+          <span>Reasoning Effort</span>
+          <SelectField
+            bind:value={aiConfig.reasoningEffort}
+            options={AI_REASONING_EFFORT_OPTIONS}
+            disabled={aiConfig.disableThinking}
+            minWidth="100%"
+          />
+        </label>
 
-      <label class="assetlib-toggle">
-        <input type="checkbox" bind:checked={aiConfig.disableThinking} />
-        <span>Disable model thinking (force reasoning effort = none)</span>
-      </label>
+        <label class="assetlib-toggle">
+          <input type="checkbox" bind:checked={aiConfig.disableThinking} />
+          <span>Disable model thinking (force reasoning effort = none)</span>
+        </label>
 
-      <label class="assetlib-modal-label">
-        <span>Custom Instruction (optional)</span>
-        <textarea
-          bind:value={aiConfig.customInstruction}
-          class="assetlib-description-input"
-          placeholder="Example: prioritize game-ready surface keywords and avoid brand names"
-          rows="3"
-          maxlength="1000"
-        ></textarea>
-      </label>
+        <label class="assetlib-modal-label">
+          <span>Custom Instruction (optional)</span>
+          <textarea
+            bind:value={aiConfig.customInstruction}
+            class="assetlib-description-input"
+            placeholder="Example: prioritize game-ready surface keywords and avoid brand names"
+            rows="3"
+            maxlength="1000"
+          ></textarea>
+        </label>
+      </fieldset>
 
       {#snippet actions()}
-        <Button variant="emphasized" onclick={saveAiConfig} disabled={aiSaving}>
+        <Button variant="emphasized" onclick={saveAiConfig} disabled={aiSaving || aiConfig.readOnly}>
           {aiSaving ? "Saving..." : "Save"}
         </Button>
         <Button onclick={closeAiDialog}>Cancel</Button>

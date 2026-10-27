@@ -9,7 +9,7 @@ const server = createServer(async (request, response) => {
   if (active) { response.writeHead(503); response.end(); return; }
   const extension = request.headers['x-model-extension'];
   if (!['obj', 'stl', 'fbx', 'glb', 'gltf'].includes(extension)) { response.writeHead(415); response.end(); return; }
-  active = true; let browser;
+  active = true; let browser; let stage = "input";
   const deadline = setTimeout(() => { void browser?.close(); request.destroy(); response.destroy(); }, 30_000);
   try {
     const chunks = []; let size = 0;
@@ -18,19 +18,25 @@ const server = createServer(async (request, response) => {
       if (size > 64 * 1024 * 1024) { response.writeHead(413); response.end(); return; }
       chunks.push(chunk);
     }
+    stage = "launch";
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? '/usr/bin/chromium', headless: true, env: { ...process.env, XDG_CONFIG_HOME: '/tmp/config', XDG_CACHE_HOME: '/tmp/cache' },
       args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--no-first-run'] });
+    stage = "context";
     const context = await browser.newContext({ viewport: { width: 320, height: 320 }, serviceWorkers: 'block', javaScriptEnabled: true });
     await context.route('**/*', route => route.abort());
     const page = await context.newPage(); page.setDefaultTimeout(15_000);
     await page.setContent('<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; img-src data: blob:; connect-src \'none\'"><canvas></canvas>');
     await page.addScriptTag({ content: script });
+    stage = "render";
     const png = await page.evaluate(async ({ data, extension }) => window.AssetThumbnail.render(data, extension), { data: Buffer.concat(chunks).toString('base64'), extension });
     const bytes = Buffer.from(png, 'base64');
     if (bytes.length > 1024 * 1024) throw new Error('Oversized result');
     await browser.close(); browser = undefined; active = false;
     response.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': bytes.length }); response.end(bytes);
-  } catch {
+  } catch (error) {
+    console.error(`Model renderer failed at stage: ${stage}`);
+    // This opt-in is used only with the fixed, non-sensitive CI fixture.
+    if (process.env.RENDERER_DIAGNOSTICS === 'ci-smoke') console.error(error instanceof Error ? error.message.slice(0, 4000) : 'Render failed');
     if (!response.headersSent && !response.destroyed) { response.writeHead(422); response.end('Unable to render model'); }
   } finally { clearTimeout(deadline); await browser?.close(); active = false; }
 });

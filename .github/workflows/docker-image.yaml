@@ -121,5 +121,5 @@ jobs:
           trap 'docker rm -f asset-library-app-smoke asset-library-renderer-smoke >/dev/null 2>&1 || true' EXIT
           docker run --detach --name asset-library-app-smoke --network none --read-only --cap-drop ALL --security-opt no-new-privileges --memory 4g --cpus 1 --tmpfs /tmp:rw,size=536870912 --tmpfs /app/data:rw,uid=1000,gid=1000,size=536870912 -e ORIGIN=http://127.0.0.1:3000 -e AI_ENABLED=false "$APP_IMAGE"
           docker exec asset-library-app-smoke node scripts/smoke-app.mjs
-          docker run --detach --name asset-library-renderer-smoke --network none --read-only --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 1 --tmpfs /tmp:rw,size=536870912 --shm-size 128m "$RENDERER_IMAGE"
-          docker exec asset-library-renderer-smoke node scripts/smoke-renderer.mjs
+          docker run --detach --name asset-library-renderer-smoke --network none --read-only --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 1 --tmpfs /tmp:rw,size=536870912 --shm-size 128m -e RENDERER_DIAGNOSTICS=ci-smoke -e DEBUG=pw:browser "$RENDERER_IMAGE"
+          docker exec asset-library-renderer-smoke node scripts/smoke-renderer.mjs || { docker logs asset-library-renderer-smoke; exit 1; }

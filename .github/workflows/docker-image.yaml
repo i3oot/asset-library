@@ -1,8 +1,9 @@
 name: Build and Publish Docker Image
 
 on:
+  workflow_dispatch:
   push:
-    workflow_dispatch:
+    branches: ["main", "fix/**"]
     tags: ["v*"] # Optional: publish on version tags too
 
 jobs:
@@ -17,6 +18,18 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 25
+          cache: npm
+
+      - name: Validate and test
+        run: |
+          npm ci
+          npm run check
+          npm test
 
       - name: Extract version from tag
         id: version
@@ -50,6 +63,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            type=ref,event=tag
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6

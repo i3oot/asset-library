@@ -20,7 +20,7 @@ for (const backend of ['sqlite', 'postgres']) {
     const uploaded = await upload('hello world'); assert.equal(uploaded.status, 201);
     const { asset } = await uploaded.json(); assert.equal(asset.sourceUrl, '');
     assert.equal((await upload('hello world')).status, 409);
-    const edited = await app.request(`/api/assets/${asset.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: "Test ' OR 1=1 --", tags: ['test'], licenses: ['CC0'], sourceUrl: 'https://example.com' }) });
+    const edited = await app.request(`/api/assets/${asset.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: "Test ' OR 1=1 --", tags: ['test'], licenses: ['CC0'], sourceUrl: 'https://example.com' }) });
     assert.equal(edited.status, 200);
     assert.equal((await edited.json()).asset.title, "Test ' OR 1=1 --");
     const preview = await app.request(asset.fileUrl, { headers: { Range: 'bytes=1-4' } });
@@ -44,7 +44,10 @@ for (const backend of ['sqlite', 'postgres']) {
     await app.restart();
     assert.equal(await (await app.request(asset.downloadUrl)).text(), 'replacement');
     const listed = await (await app.request('/api/assets')).json(); assert.equal(listed.assets.length, 1);
-    assert.equal((await app.request(`/api/assets/${asset.id}`, { method: 'DELETE' })).status, 200);
+    assert.equal((await app.request(`/api/assets/${asset.id}/delete`, { method: 'POST' })).status, 415);
+    assert.equal((await app.request(`/api/assets/${asset.id}/delete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{' })).status, 400);
+    assert.equal((await app.request(`/api/assets/${asset.id}/delete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'invalid' }) })).status, 400);
+    assert.equal((await app.request(`/api/assets/${asset.id}/delete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'delete' }) })).status, 200);
     assert.equal((await (await app.request('/api/assets')).json()).assets.length, 0);
     assert.equal((await app.request(asset.fileUrl)).status, 404);
   });

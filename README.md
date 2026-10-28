@@ -336,6 +336,12 @@ revisions when an upload needs a decision. To save an update, submit `targetAsse
 defaults to preserving a new version when no mode is supplied. SQLite-to-PostgreSQL
 migration now copies and verifies history as well as current metadata; stored files
 must still be transferred separately in maintenance mode.
+UI and WebMCP metadata updates use `POST /api/assets/{id}`, sharing the exact PATCH
+handler. File updates use `POST /api/assets` with the explicit target/version decision.
+This works with ingress policies that permit POST but reject PATCH; all requests
+still pass the existing WAF, authentication and same-origin mutation checks.
+The confirmed UI delete action uses `POST /api/assets/{id}/delete` with an explicit
+JSON action; the legacy DELETE API remains available.
 Recovery tests take a real SQLite backup with its coordinated upload files, restore
 it into a separate app, and also migrate that backup into an isolated PostgreSQL
 schema in CI. Both old and current downloads are verified after restoration.

@@ -141,9 +141,11 @@ export class AssetLibraryApiService {
     form.set('mode', decision.mode);
     form.set('expectedRevision', String(decision.expectedRevision));
     form.set('note', decision.note);
+    form.set('title', file.name);
+    form.set('targetAssetId', assetId);
 
-    const response = await fetch(`/api/assets/${assetId}/file`, {
-      method: "PATCH",
+    const response = await fetch('/api/assets', {
+      method: "POST",
       body: form,
     });
 
@@ -160,7 +162,7 @@ export class AssetLibraryApiService {
     update: AssetUpdatePayload,
   ): Promise<void> {
     const response = await fetch(`/api/assets/${assetId}`, {
-      method: "PATCH",
+      method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(update),
     });
@@ -172,8 +174,10 @@ export class AssetLibraryApiService {
   }
 
   async deleteAsset(assetId: string): Promise<void> {
-    const response = await fetch(`/api/assets/${assetId}`, {
-      method: "DELETE",
+    const response = await fetch(`/api/assets/${assetId}/delete`, {
+      method: "POST",
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'delete' }),
     });
 
     const payload = (await response.json()) as { error?: string };

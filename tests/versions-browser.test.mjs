@@ -11,6 +11,10 @@ test('authenticated browser asks new-version/replace/cancel and displays immutab
   const browser = await chromium.launch({ executablePath: process.env.TEST_CHROMIUM_PATH, args: ['--no-sandbox'] });
   t.after(() => browser.close());
   const page = await browser.newPage(); const errors = [];
+  const mutationMethods = [];
+  page.on('request', request => {
+    if (request.url().includes('/api/assets') && !['GET', 'HEAD'].includes(request.method())) mutationMethods.push(request.method());
+  });
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(app.origin); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
   async function select(text) {
@@ -40,8 +44,7 @@ test('authenticated browser asks new-version/replace/cancel and displays immutab
   await page.getByRole('heading', { name: 'Version 2 · new-version · Change #2', exact: true }).waitFor();
   assert.ok(await page.getByText('Test User', { exact: false }).count());
   await page.getByRole('button', { name: 'Close History', exact: true }).click();
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await select('corrected version two');
+  await page.getByRole('dialog', { name: 'Edit asset metadata' }).locator('input[type=file]').setInputFiles({ name: 'history.txt', mimeType: 'text/plain', buffer: Buffer.from('corrected version two') });
   await page.getByRole('button', { name: 'Replace Current', exact: true }).click();
   // Use the authenticated HTTP context only to wait for the mutation, never manufacture a session.
   await waitForChanges(3);
@@ -50,11 +53,14 @@ test('authenticated browser asks new-version/replace/cancel and displays immutab
   assert.equal(history.revisions[0].actor.name, 'Test User');
   assert.ok(!('email' in history.revisions[0].actor));
   assert.equal(await (await page.request.get(app.origin + history.revisions[2].asset.downloadUrl)).text(), 'version one');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await select('cancelled upload');
   await page.getByRole('button', { name: 'Cancel Upload', exact: true }).click();
   assert.equal((await (await page.request.get(app.origin + `/api/assets/${asset.id}/versions`)).json()).total, 3);
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await page.waitForURL(app.origin + '/auth/signed-out');
   assert.equal((await page.request.get(app.origin + history.revisions[2].asset.downloadUrl)).status(), 401);
+  assert.ok(mutationMethods.length >= 3);
+  assert.ok(mutationMethods.every(method => method === 'POST'));
   assert.deepEqual(errors, []);
 });

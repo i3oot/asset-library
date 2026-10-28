@@ -99,3 +99,7 @@ export const DELETE: RequestHandler = async ({ params }) => {
 
   return json({ ok: true });
 };
+
+// Some authenticated ingress policies support POST actions but reject PATCH.
+// Share the handler so validation, author attribution and revision checks stay identical.
+export const POST: RequestHandler = PATCH;

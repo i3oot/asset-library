@@ -143,7 +143,7 @@ export function mountWebMcp(callbacks: Callbacks, status: (value: string) => voi
       const body = { title: input.title ?? current.title, description: input.description ?? current.description, tags: input.tags ?? current.tags,
         licenses: input.licenses ?? current.licenses, sourceUrl: input.sourceUrl ?? current.sourceUrl, note: input.note, expectedRevision: input.expectedRevision };
       if (!body.licenses.length) throw new ToolFailure('license_required', 'Provide at least one license; the tool will not invent one.');
-      const result = await request(`/api/assets/${encodeURIComponent(input.id)}`, signal, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      const result = await request(`/api/assets/${encodeURIComponent(input.id)}`, signal, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
       // Saving is already committed; a failed UI refresh must not suggest retrying the mutation.
       await callbacks.changed().catch(() => {});
       return publicAsset(result.asset);

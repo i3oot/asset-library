@@ -13,7 +13,7 @@ install_rules() {
 install_rules iptables
 if ip6tables -w 5 -L OUTPUT >/dev/null 2>&1; then
   install_rules ip6tables
-elif [ -s /proc/net/if_inet6 ]; then
+elif [ -e /proc/net/if_inet6 ]; then
   # Fail closed even for link-local IPv6 when filtering is unavailable.
   if awk '$1 != "00000000000000000000000000000001" {found=1} END {exit !found}' /proc/net/if_inet6; then
     echo 'IPv6 isolation could not be configured' >&2

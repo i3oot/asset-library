@@ -51,7 +51,9 @@ async function config() {
           const target = new URL(input);
           if (target.origin !== s.issuer.origin || !target.pathname.startsWith('/application/o/')) throw new Error('Untrusted IdP endpoint');
           const headers = new Headers(init.headers);
-          headers.set('Host', target.host); headers.set('X-Forwarded-Proto', 'https');
+          headers.set('Host', target.host);
+          headers.set('X-Forwarded-Host', target.host);
+          headers.set('X-Forwarded-Proto', 'https');
           const body = init.body instanceof Uint8Array ? new Uint8Array(init.body) : init.body;
           return fetch(new URL(target.pathname + target.search, internal), { ...init, body, headers, redirect: 'manual' });
         };

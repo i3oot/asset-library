@@ -10,10 +10,19 @@ function jwt(claims, badSignature) {
   const input = encode({ alg: 'RS256', kid: jwk.kid, typ: 'JWT' }) + '.' + encode(claims);
   return input + '.' + sign('RSA-SHA256', Buffer.from(input), badSignature ? other.privateKey : pair.privateKey).toString('base64url');
 }
-export async function provider(t) {
-  let issuer; const codes = new Map(); let mode = 'valid'; let exchanges = 0;
+export async function provider(t, options = {}) {
+  let issuer, internalOrigin; const codes = new Map(); let mode = 'valid'; let exchanges = 0;
+  const prefix = options.privateTransport ? '/application/o/fixture/' : '/';
+  const forwardedPaths = [];
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, issuer);
+    if (options.privateTransport) {
+      if (request.headers['x-forwarded-host'] !== new URL(issuer).host || request.headers['x-forwarded-proto'] !== 'https') {
+        response.writeHead(400); response.end(); return;
+      }
+      forwardedPaths.push(url.pathname);
+      url.pathname = '/' + url.pathname.slice(prefix.length);
+    }
     if (url.pathname === '/.well-known/openid-configuration') {
       response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ issuer,
         authorization_endpoint: issuer + 'authorize', token_endpoint: issuer + 'token', jwks_uri: issuer + 'jwks',
@@ -41,7 +50,8 @@ export async function provider(t) {
       response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ access_token: 'TEST_ONLY_ACCESS_TOKEN', token_type: 'Bearer', expires_in: 900, id_token: jwt(claims, mode === 'signature') }));
     } else { response.writeHead(404); response.end(); }
   });
-  server.listen(0, '127.0.0.1'); await once(server, 'listening'); issuer = `http://127.0.0.1:${server.address().port}/`;
+  server.listen(0, '127.0.0.1'); await once(server, 'listening'); internalOrigin = `http://127.0.0.1:${server.address().port}`;
+  issuer = options.privateTransport ? 'https://auth.example.invalid' + prefix : internalOrigin + '/';
   t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
-  return { issuer, mode(value) { mode = value; }, exchanges: () => exchanges };
+  return { issuer, internalOrigin, forwardedPaths, mode(value) { mode = value; }, exchanges: () => exchanges };
 }

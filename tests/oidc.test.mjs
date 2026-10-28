@@ -19,6 +19,25 @@ async function finish(app, flow) {
 }
 const oidcEnv = issuer => ({ AUTH_MODE: 'oidc', OIDC_ISSUER_URL: issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: 'TEST_ONLY_OIDC_SECRET', OIDC_ALLOWED_GROUPS: 'library-users', OIDC_ALLOW_HTTP_LOCALHOST: 'true' });
 
+test('private Authentik transport preserves the canonical forwarded host for discovery, token and JWKS', async t => {
+  const op = await provider(t, { privateTransport: true });
+  const app = await startApp(t, { ...oidcEnv(op.issuer), ORIGIN: 'https://localhost', OIDC_INTERNAL_ORIGIN: op.internalOrigin });
+  const login = await app.request('/auth/login', { redirect: 'manual' }); assert.equal(login.status, 302);
+  const location = new URL(login.headers.get('location')); assert.equal(location.origin, 'https://auth.example.invalid');
+  const authorization = await fetch(new URL(location.pathname + location.search, op.internalOrigin), {
+    redirect: 'manual', headers: { 'X-Forwarded-Host': location.host, 'X-Forwarded-Proto': 'https' },
+  });
+  assert.equal(authorization.status, 302);
+  const callback = new URL(authorization.headers.get('location'));
+  const result = await app.request(callback.pathname + callback.search, { redirect: 'manual', headers: { Cookie: cookies(login) } });
+  assert.equal(result.status, 303); assert.equal(result.headers.get('location'), '/');
+  assert.ok(cookies(result).includes('__Host-asset-library-session='));
+  assert.equal((await app.request('/api/assets', { headers: { Cookie: cookies(result) } })).status, 200);
+  for (const path of ['.well-known/openid-configuration', 'token', 'jwks']) {
+    assert.ok(op.forwardedPaths.includes('/application/o/fixture/' + path), path);
+  }
+});
+
 for (const backend of ['sqlite', 'postgres']) {
   test(`${backend}: native OIDC verifies PKCE/signatures, persists opaque sessions, protects data and logs out`, { skip: backend === 'postgres' && !process.env.TEST_DATABASE_URL }, async t => {
     const op = await provider(t);

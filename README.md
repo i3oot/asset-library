@@ -253,6 +253,20 @@ server poster; if rendering fails in the browser, the server poster stays visibl
 
 # Privacy and security
 
+Production model workers require kernel-level egress isolation. The
+`renderer-network-guard` image installs IPv4/IPv6 output rules in the pod network
+namespace as a trusted, short-lived `NET_ADMIN` initializer. The renderer then
+runs without capabilities. Loopback and replies to existing connections are
+allowed; new outbound connections are dropped. This also works on Flannel,
+which does not itself enforce Kubernetes NetworkPolicies.
+
+Set `RENDERER_REQUIRE_SIGNATURE=true` and `RENDERER_PUBLIC_KEY` (base64 DER/SPKI
+Ed25519) on the worker. Set `MODEL_THUMBNAIL_SIGNING_KEY` (base64 DER/PKCS8) only
+on the app. The worker holds only a public verification key. Requests bind the
+body bytes, format, method/path, timestamp and a single-use nonce. Unsigned,
+tampered, stale and replayed requests are rejected before model decoding.
+Keep the private signing key in your secret manager; use SOPS for GitOps.
+
 Icons and fonts are bundled locally. There is no analytics or error-reporting
 service in the app. The browser CSP permits connections only to the app's origin;
 3D previews reject references to remote resources. AI SDK telemetry and input/output

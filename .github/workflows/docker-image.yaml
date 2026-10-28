@@ -131,7 +131,7 @@ jobs:
           trap 'docker rm -f asset-library-app-smoke asset-library-renderer-smoke asset-library-network-smoke >/dev/null 2>&1 || true' EXIT
           docker run --detach --name asset-library-app-smoke --network none --read-only --cap-drop ALL --security-opt no-new-privileges --memory 4g --cpus 1 --tmpfs /tmp:rw,size=536870912 --tmpfs /app/data:rw,uid=1000,gid=1000,size=536870912 -e ORIGIN=http://127.0.0.1:3000 -e AI_ENABLED=false "$APP_IMAGE"
           docker exec asset-library-app-smoke node scripts/smoke-app.mjs
-          docker run --detach --name asset-library-network-smoke --read-only --cap-drop ALL --cap-add NET_ADMIN --security-opt no-new-privileges --tmpfs /tmp --entrypoint /bin/sh "$GUARD_IMAGE" -c '/usr/local/bin/renderer-firewall && touch /tmp/firewall-ready && exec sleep 300'
+          docker run --detach --name asset-library-network-smoke --read-only --cap-drop ALL --cap-add NET_ADMIN --security-opt no-new-privileges --tmpfs /tmp --tmpfs /run --entrypoint /bin/sh "$GUARD_IMAGE" -c '/usr/local/bin/renderer-firewall && touch /tmp/firewall-ready && exec sleep 300'
           for attempt in $(seq 1 30); do docker exec asset-library-network-smoke test -f /tmp/firewall-ready && break || sleep 1; done
           docker exec asset-library-network-smoke test -f /tmp/firewall-ready
           # Reuse the guarded namespace with no renderer capabilities, as in a pod.

@@ -33,6 +33,13 @@ for (const backend of ['sqlite', 'postgres']) {
     const replaced = await app.request(`/api/assets/${asset.id}/file`, { method: 'PATCH', body: replacement });
     assert.equal(replaced.status, 200); assert.equal((await replaced.json()).asset.thumbhash, undefined);
     assert.equal((await app.request(asset.thumbnailUrl)).status, 404);
+    const history = await (await app.request(`/api/assets/${asset.id}/versions`)).json();
+    const original = history.revisions.find(row => row.revision === 1);
+    assert.equal(original.asset.thumbhash, asset.thumbhash);
+    const oldPoster = await app.request(original.asset.thumbnailUrl);
+    assert.equal(oldPoster.status, 200);
+    assert.equal((await sharp(Buffer.from(await oldPoster.arrayBuffer())).metadata()).width, 320);
+    assert.deepEqual(Buffer.from(await (await app.request(original.asset.downloadUrl)).arrayBuffer()), image);
     await app.request(`/api/assets/${asset.id}`, { method: 'DELETE' });
   });
 }

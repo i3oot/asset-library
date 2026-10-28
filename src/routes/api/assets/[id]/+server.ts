@@ -3,6 +3,7 @@ import {
   deleteAsset,
   toAssetView,
   updateAssetMetadata,
+  RevisionConflictError,
 } from "$lib/server/assets";
 
 function parseTags(input: string): string[] {
@@ -12,7 +13,7 @@ function parseTags(input: string): string[] {
     .filter(Boolean);
 }
 
-export const PATCH: RequestHandler = async ({ params, request }) => {
+export const PATCH: RequestHandler = async ({ params, request, locals }) => {
   if (!params.id) {
     return json({ error: "Missing asset id." }, { status: 400 });
   }
@@ -23,6 +24,8 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
     tags?: unknown;
     licenses?: unknown;
     sourceUrl?: unknown;
+    note?: unknown;
+    expectedRevision?: unknown;
   };
 
   if (typeof body.title !== "string" || !body.title.trim()) {
@@ -61,13 +64,21 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
   const description =
     typeof body.description === "string" ? body.description.trim() : "";
 
-  const record = await updateAssetMetadata(params.id, {
+  if (body.note !== undefined && (typeof body.note !== 'string' || body.note.length > 2000)) return json({ error: 'Invalid change note.' }, { status: 400 });
+  if (body.expectedRevision !== undefined && (!Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 1)) return json({ error: 'Invalid history revision.' }, { status: 400 });
+  let record;
+  try { record = await updateAssetMetadata(params.id, {
     title: body.title.trim(),
     description,
     tags,
     licenses,
     sourceUrl,
-  });
+  }, { actor: locals.user ? { subject: locals.user.subject, issuer: locals.user.issuer, name: locals.user.name } : null,
+    note: body.note as string | undefined, expectedRevision: body.expectedRevision as number | undefined });
+  } catch (error) {
+    if (error instanceof RevisionConflictError) return json({ error: error.message, code: 'revision_conflict' }, { status: 409 });
+    throw error;
+  }
 
   if (!record) {
     return json({ error: "Asset not found." }, { status: 404 });

@@ -1,13 +1,14 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, cp } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const build = path.resolve('server.mjs');
-export async function startApp(t, overrides = {}) {
+export async function startApp(t, overrides = {}, fixture = {}) {
   const cwd = await mkdtemp(path.join(tmpdir(), 'asset-library-assets-'));
+  if (fixture.dataSource) await cp(fixture.dataSource, path.join(cwd, 'data'), { recursive: true });
   const socket = createServer(); socket.listen(0, '127.0.0.1'); await once(socket, 'listening');
   const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
   const origin = `http://127.0.0.1:${port}`;

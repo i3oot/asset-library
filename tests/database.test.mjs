@@ -35,13 +35,20 @@ test('SQLite to PostgreSQL migration preserves values and refuses a nonempty tar
   t.after(() => rm(directory, { recursive: true, force: true }));
   const sqlitePath = path.join(directory, 'assets.db');
   const source = await createDatabase({ sqlitePath });
-  await insert(source); await source.close();
+  await insert(source);
+  const historySnapshot = JSON.stringify({ originalName: 'original.txt', title: 'Before editing' });
+  await source.prepare('INSERT INTO asset_revisions (asset_id, revision, version, operation, created_at, actor_json, note, snapshot_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(row.id, 1, 1, 'baseline', row.upload_date, null, 'Existing history', historySnapshot);
+  await source.close();
   const target = await createDatabase({ backend: 'postgres', connectionString: process.env.TEST_DATABASE_URL });
   t.after(() => target.close());
   await target.prepare('DELETE FROM assets').run();
   assert.equal(await migrateSqliteToPostgres(sqlitePath, process.env.TEST_DATABASE_URL), 1);
   const migrated = await target.prepare('SELECT * FROM assets WHERE id = ?').get(row.id);
   for (const column of Object.keys(row)) assert.equal(migrated[column] === null ? null : String(migrated[column]), row[column] === null ? null : String(row[column]));
+  const history = await target.prepare('SELECT * FROM asset_revisions WHERE asset_id = ?').get(row.id);
+  assert.equal(history.snapshot_json, historySnapshot);
+  assert.equal(history.note, 'Existing history');
   await assert.rejects(migrateSqliteToPostgres(sqlitePath, process.env.TEST_DATABASE_URL), /nonempty/);
   await target.prepare('DELETE FROM assets').run();
 });

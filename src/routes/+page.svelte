@@ -7,7 +7,7 @@
   import { replaceState } from "$app/navigation";
   import { browser } from "$app/env";
   import * as publicEnv from "$app/env/public";
-  import type { AssetCategory, AssetView } from "$lib/types";
+  import type { AssetCategory, AssetView, AssetRevision } from "$lib/types";
   import AssetCard from "$lib/components/AssetCard.svelte";
   import Button from "$lib/components/Button.svelte";
   import Dialog from "$lib/components/Dialog.svelte";
@@ -19,7 +19,7 @@
   import TitleIconReel from "$lib/components/TitleIconReel.svelte";
   import {
     AssetLibraryApiService,
-    type AiConfig,
+    type AiConfig, UploadConflict, type UploadDecision, type UploadMatch,
   } from "$lib/services/asset-library-api";
   import {
     SourceLicensePrefillHelper,
@@ -34,6 +34,16 @@
     sort: "sort",
   } as const;
   const GITHUB_REPO_URL = "https://github.com/Kellojo/asset-library";
+  let historyAssetId: string | null = null;
+  let historyRows: AssetRevision[] = [];
+  let historyTotal = 0;
+  let historyBusy = false;
+  let historyError = '';
+  let uploadChoice: { file: File; matches: UploadMatch[] } | null = null;
+  let uploadChoiceTarget = '';
+  let uploadChangeNote = '';
+  let resolveUploadChoice: ((choice: UploadDecision | null) => void) | null = null;
+  let decisionTail = Promise.resolve();
   let agentToolsStatus = "Checking agent tool support…";
   const SORT_MODE_OPTIONS = [
     { value: "best-match", label: "Best Match" },
@@ -562,16 +572,61 @@
     void processUploadQueue();
   }
 
+  async function askUploadChoice(file: File, matches: UploadMatch[]): Promise<UploadDecision | null> {
+    const previous = decisionTail;
+    let release!: () => void;
+    decisionTail = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try {
+      uploadChoice = { file, matches };
+      uploadChoiceTarget = matches.length === 1 ? matches[0].asset.id : '';
+      uploadChangeNote = '';
+      return await new Promise<UploadDecision | null>(resolve => { resolveUploadChoice = resolve; });
+    } finally { release(); }
+  }
+  function finishUploadChoice(mode: UploadDecision['mode'] | null): void {
+    const target = uploadChoice?.matches.find(match => match.asset.id === uploadChoiceTarget);
+    if (mode && !target) return;
+    resolveUploadChoice?.(mode && target ? { targetAssetId: target.asset.id, expectedRevision: target.revision, mode, note: uploadChangeNote } : null);
+    resolveUploadChoice = null; uploadChoice = null;
+  }
   async function uploadSingleFile(upload: QueuedUpload): Promise<void> {
     const { file, sourceUrl, licenses } = upload;
     const form = new FormData();
     form.set("title", titleFromFileName(file.name));
-    form.set("tags", "");
-    form.set("sourceUrl", sourceUrl);
-    form.set("licenses", licenses.join(","));
-    form.set("file", file);
+    form.set("tags", ""); form.set("sourceUrl", sourceUrl);
+    form.set("licenses", licenses.join(",")); form.set("file", file);
+    // Ask before sending a potentially large same-name file. The server rechecks races/content duplicates.
+    const known = (await api.listAssets()).filter(asset => asset.originalName.toLowerCase() === file.name.toLowerCase());
+    let matches = await Promise.all(known.map(async asset => ({ asset, revision: (await api.history(asset.id)).revisions[0].revision })));
+    while (true) {
+      if (matches.length) {
+        const decision = await askUploadChoice(file, matches);
+        if (!decision) throw new Error(`Upload cancelled: ${file.name}`);
+        form.set('targetAssetId', decision.targetAssetId); form.set('mode', decision.mode);
+        form.set('expectedRevision', String(decision.expectedRevision)); form.set('note', decision.note);
+      }
+      try { await api.uploadAsset(form, file.name, () => {}); return; }
+      catch (error) {
+        if (!(error instanceof UploadConflict)) throw error;
+        matches = error.matches;
+      }
+    }
+  }
 
-    await api.uploadAsset(form, file.name, () => {});
+  async function openHistory(assetId: string): Promise<void> {
+    historyAssetId = assetId; historyRows = []; historyTotal = 0; historyError = '';
+    await loadMoreHistory();
+  }
+  async function loadMoreHistory(): Promise<void> {
+    const assetId = historyAssetId;
+    if (!assetId || historyBusy) return;
+    historyBusy = true;
+    try {
+      const page = await api.history(assetId, historyRows.length);
+      if (historyAssetId === assetId) { historyRows = [...historyRows, ...page.revisions]; historyTotal = page.total; }
+    } catch { historyError = 'Could not load history. Please try again.'; }
+    finally { historyBusy = false; }
   }
 
   async function processUploadQueue(): Promise<void> {
@@ -820,9 +875,15 @@
     replaceInProgress = true;
 
     try {
-      await api.replaceAssetFile(editingAssetId, file);
+      const assetId = editingAssetId;
+      const asset = assets.find(asset => asset.id === assetId);
+      if (!asset) return;
+      const history = await api.history(assetId);
+      const decision = await askUploadChoice(file, [{ asset, revision: history.revisions[0].revision }]);
+      if (!decision) return;
+      await api.replaceAssetFile(assetId, file, decision);
 
-      toast.success("File replaced. Please review metadata.");
+      toast.success("File update saved in history. Please review metadata.");
       await loadAssets();
     } catch (errorValue) {
       toast.error(
@@ -886,7 +947,7 @@
 
   async function removeAsset(asset: AssetView): Promise<void> {
     const shouldDelete = globalThis.confirm(
-      `Delete "${asset.title}"? This cannot be undone.`,
+      `Delete "${asset.title}" and all its historical versions? This cannot be undone.`,
     );
     if (!shouldDelete) return;
 
@@ -975,6 +1036,10 @@
 <p class="agent-tools-status" role="status">{agentToolsStatus}</p>
 
 <style>
+  .asset-history { padding-left: 1.5rem; }
+  .asset-history li { border-bottom: 1px solid #8885; padding: 1rem 0; }
+  .asset-history dt { font-weight: 600; }
+  .asset-history dd { margin: 0 0 0.5rem; overflow-wrap: anywhere; }
   .agent-tools-status { margin: 0.5rem 1rem; font-size: 0.8rem; opacity: 0.7; }
 </style>
 
@@ -1192,13 +1257,14 @@
       </label>
 
       {#snippet actions()}
+        <Button onclick={() => editingAssetId && openHistory(editingAssetId)}>Version History</Button>
         <Button
           disabled={saveInProgress ||
             replaceInProgress ||
             deletingAssetId === editingAssetId}
           onclick={triggerReplaceFilePicker}
         >
-          {replaceInProgress ? "Replacing..." : "Replace File"}
+          {replaceInProgress ? "Saving file..." : "Upload File Update"}
         </Button>
         <Button
           variant="delete"
@@ -1223,6 +1289,61 @@
         <Button onclick={closeEditDialog} disabled={replaceInProgress}
           >Cancel</Button
         >
+      {/snippet}
+    </Dialog>
+  {/if}
+
+  {#if historyAssetId}
+    <Dialog ariaLabel="Asset version history" title="Version History" scrollable onClose={() => { historyAssetId = null; }}>
+      <p>Every file and metadata update is recorded. Replacements retain the version number; new versions increment it.</p>
+      {#if historyError}<p role="alert">{historyError}</p>{/if}
+      <ol class="asset-history">
+        {#each historyRows as entry (entry.revision)}
+          <li>
+            <h3>Version {entry.version} · {entry.operation} · Change #{entry.revision}</h3>
+            <p>{new Date(entry.createdAt).toLocaleString()} · {entry.actor?.name ?? 'Unknown / authentication disabled'}</p>
+            {#if entry.note}<p>{entry.note}</p>{/if}
+            {#if entry.asset.thumbnailUrl}<img src={entry.asset.thumbnailUrl} alt="Preview of version {entry.version}" width="160" />{/if}
+            <dl>
+              <dt>File</dt><dd>{entry.asset.originalName} · {formatSize(entry.asset.size)}</dd>
+              <dt>Title</dt><dd>{entry.asset.title}</dd>
+              <dt>Description</dt><dd>{entry.asset.description || '—'}</dd>
+              <dt>Tags</dt><dd>{entry.asset.tags.join(', ') || '—'}</dd>
+              <dt>Licenses</dt><dd>{entry.asset.licenses.join(', ')}</dd>
+              <dt>Source</dt><dd>{entry.asset.sourceUrl || '—'}</dd>
+              <dt>SHA-256</dt><dd >{entry.asset.hash || 'Unavailable'}</dd>
+            </dl>
+            <a href={entry.asset.downloadUrl}>Download this revision</a>
+          </li>
+        {/each}
+      </ol>
+      {#if historyBusy}<p role="status">Loading history…</p>{/if}
+      {#snippet actions()}
+        {#if historyRows.length < historyTotal}<Button disabled={historyBusy} onclick={loadMoreHistory}>Load More Changes</Button>{/if}
+        {#if historyError}<Button disabled={historyBusy} onclick={loadMoreHistory}>Retry</Button>{/if}
+        <Button onclick={() => { historyAssetId = null; }}>Close History</Button>
+      {/snippet}
+    </Dialog>
+  {/if}
+
+  {#if uploadChoice}
+    <Dialog ariaLabel="Choose upload version" title="Save File Update" scrollable onClose={() => finishUploadChoice(null)}>
+      <p><strong>{uploadChoice.file.name}</strong>: choose the asset and how to save this update.</p>
+      <label class="assetlib-modal-label">
+        <span>Existing asset</span>
+        <select bind:value={uploadChoiceTarget}>
+          <option value="" disabled>Select an asset</option>
+          {#each uploadChoice.matches as match}
+            <option value={match.asset.id}>{match.asset.title} ({match.asset.originalName})</option>
+          {/each}
+        </select>
+      </label>
+      <label class="assetlib-modal-label"><span>Change note (optional)</span><textarea bind:value={uploadChangeNote} maxlength="2000" rows="2"></textarea></label>
+      <p>New Version increases the version number. Replace Current keeps the version number. Both retain the previous file in history and preserve existing metadata.</p>
+      {#snippet actions()}
+        <Button variant="emphasized" disabled={!uploadChoiceTarget} onclick={() => finishUploadChoice('new-version')}>Save New Version</Button>
+        <Button disabled={!uploadChoiceTarget} onclick={() => finishUploadChoice('replace')}>Replace Current</Button>
+        <Button onclick={() => finishUploadChoice(null)}>Cancel Upload</Button>
       {/snippet}
     </Dialog>
   {/if}

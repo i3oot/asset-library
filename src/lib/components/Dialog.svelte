@@ -9,12 +9,14 @@
     onClose,
     children,
     actions,
+    scrollable = false,
   }: {
     ariaLabel: string;
     title?: string;
     onClose?: () => void;
     children?: Snippet;
     actions?: Snippet;
+    scrollable?: boolean;
   } = $props();
 
   let dialogEl: HTMLDialogElement | null = null;
@@ -71,6 +73,7 @@
 <dialog
   bind:this={dialogEl}
   class="panel assetlib-glass"
+  class:scrollable
   class:is-closing={isClosing}
   use:openAsModal
   aria-label={ariaLabel}
@@ -79,7 +82,11 @@
   {#if title}
     <h2>{title}</h2>
   {/if}
-  {@render children?.()}
+  {#if scrollable}
+    <div class="scroll-body">{@render children?.()}</div>
+  {:else}
+    {@render children?.()}
+  {/if}
   {#if actions}
     <div class="actions">
       {@render actions()}
@@ -133,7 +140,12 @@
     display: flex;
     justify-content: flex-end;
     gap: 0.5rem;
+    flex-wrap: wrap;
+    flex-shrink: 0;
   }
+
+  .panel.scrollable { display: flex; flex-direction: column; overflow: hidden; box-sizing: border-box; }
+  .scroll-body { min-height: 0; overflow: auto; }
 
   @keyframes dialog-open {
     from {

@@ -1,4 +1,4 @@
-import type { AssetView } from "$lib/types";
+import type { AssetView, AssetRevision } from "$lib/types";
 
 export type AiConfig = {
   enabled: boolean;
@@ -32,7 +32,14 @@ export type AssetUpdatePayload = {
 export type ApiErrorPayload = {
   error?: string;
   duplicate?: boolean;
+  code?: string;
+  matches?: UploadMatch[];
 };
+export type UploadMatch = { asset: AssetView; revision: number };
+export type UploadDecision = { targetAssetId: string; expectedRevision: number; mode: 'replace' | 'new-version'; note: string };
+export class UploadConflict extends Error {
+  constructor(public matches: UploadMatch[]) { super('Choose how to save this upload.'); }
+}
 
 export class AssetLibraryApiService {
   async listAssets(): Promise<AssetView[]> {
@@ -83,7 +90,8 @@ export class AssetLibraryApiService {
           return;
         }
 
-        reject(new Error(payload.error || `Upload failed for ${fileName}.`));
+        reject(payload.code === 'upload_conflict' && payload.matches?.length
+          ? new UploadConflict(payload.matches) : new Error(payload.error || `Upload failed for ${fileName}.`));
       };
 
       xhr.send(form);
@@ -126,9 +134,13 @@ export class AssetLibraryApiService {
   async replaceAssetFile(
     assetId: string,
     file: File,
+    decision: UploadDecision,
   ): Promise<ApiErrorPayload | null> {
     const form = new FormData();
     form.set("file", file);
+    form.set('mode', decision.mode);
+    form.set('expectedRevision', String(decision.expectedRevision));
+    form.set('note', decision.note);
 
     const response = await fetch(`/api/assets/${assetId}/file`, {
       method: "PATCH",
@@ -176,5 +188,11 @@ export class AssetLibraryApiService {
 
     const payload = (await response.json()) as { text: string };
     return payload.text;
+  }
+
+  async history(assetId: string, offset = 0): Promise<{ total: number; revisions: AssetRevision[] }> {
+    const response = await fetch(`/api/assets/${encodeURIComponent(assetId)}/versions?offset=${offset}&limit=50`);
+    if (!response.ok) throw new Error('Failed to load version history.');
+    return response.json();
   }
 }

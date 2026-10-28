@@ -8,6 +8,7 @@ import type {
   AssetPreviewKind,
   AssetRecord,
   AssetView,
+  AssetRevision, RevisionActor, RevisionOperation,
 } from "$lib/types";
 import { safeSourceUrl } from "$lib/safe-url";
 import { generateAssetThumbnail } from "$lib/server/thumbnails";
@@ -98,6 +99,38 @@ export class DuplicateAssetError extends Error {
     this.name = "DuplicateAssetError";
     this.existingAsset = existingAsset;
   }
+}
+
+export class UploadConflictError extends Error {
+  constructor(public matches: AssetRecord[]) { super("Choose whether to replace the current version or save a new version."); }
+}
+export class RevisionConflictError extends Error {
+  constructor() { super("The asset changed. Reload its history before uploading again."); }
+}
+type MutationOptions = { actor?: RevisionActor | null; note?: string; expectedRevision?: number };
+
+async function lockAsset(database: Database, id: string): Promise<AssetRecord | undefined> {
+  const result = await database.prepare('UPDATE assets SET id = id WHERE id = ?').run(id);
+  if (!result.changes) return undefined;
+  return rowToAssetRecord(await database.prepare('SELECT * FROM assets WHERE id = ?').get(id) as AssetRow);
+}
+async function appendRevision(database: Database, record: AssetRecord, operation: RevisionOperation, options: MutationOptions = {}) {
+  const latest = await database.prepare('SELECT revision, version FROM asset_revisions WHERE asset_id = ? ORDER BY revision DESC LIMIT 1').get(record.id) as { revision: number; version: number } | undefined;
+  const revision = (latest?.revision ?? 0) + 1;
+  const version = (latest?.version ?? 1) + (operation === 'new-version' ? 1 : 0);
+  await database.prepare(`INSERT INTO asset_revisions (asset_id, revision, version, operation, created_at, actor_json, note, snapshot_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(record.id, revision, version, operation,
+      operation === 'baseline' ? record.uploadDate : new Date().toISOString(),
+      options.actor ? JSON.stringify(options.actor) : null, (options.note ?? '').trim().slice(0, 2000), JSON.stringify(record));
+}
+async function baseline(database: Database, record: AssetRecord, options: MutationOptions) {
+  const latest = await database.prepare('SELECT MAX(revision) AS revision FROM asset_revisions WHERE asset_id = ?').get(record.id) as { revision: number | null };
+  if (!latest.revision) await appendRevision(database, record, 'baseline');
+  if (options.expectedRevision !== undefined && options.expectedRevision !== (latest.revision ?? 1)) throw new RevisionConflictError();
+}
+async function uploadMatches(database: Database, filename: string, hash: string) {
+  const rows = await database.prepare('SELECT * FROM assets WHERE LOWER(original_name) = LOWER(?) OR hash = ? ORDER BY id').all(filename, hash) as AssetRow[];
+  return rows.map(rowToAssetRecord);
 }
 
 function computeAssetHash(bytes: Uint8Array | Buffer): string {
@@ -464,12 +497,14 @@ export async function readAssets(): Promise<AssetRecord[]> {
 }
 
 export function toAssetView(record: AssetRecord): AssetView {
+  // A stable asset id can point to new bytes; mounted image/model elements must reload too.
+  const contentKey = record.hash ? `?hash=${encodeURIComponent(record.hash)}` : '';
   return {
     ...record,
-    fileUrl: `/api/assets/${record.id}/file`,
+    fileUrl: `/api/assets/${record.id}/file${contentKey}`,
     downloadUrl: `/api/assets/${record.id}/download`,
-    textPreviewUrl: `/api/assets/${record.id}/text`,
-    thumbnailUrl: record.thumbhash ? `/api/assets/${record.id}/thumbnail` : undefined,
+    textPreviewUrl: `/api/assets/${record.id}/text${contentKey}`,
+    thumbnailUrl: record.thumbhash ? `/api/assets/${record.id}/thumbnail${contentKey}` : undefined,
   };
 }
 
@@ -483,44 +518,15 @@ export async function saveAsset(params: {
   mimeType: string;
   size: number;
   bytes: Uint8Array;
+  actor?: RevisionActor | null;
+  note?: string;
 }): Promise<AssetRecord> {
   await ensureStorage();
   const database = await getDb();
   const incomingHash = computeAssetHash(params.bytes);
   await ensureAssetHashes();
-  const duplicateRow = await database
-    .prepare(
-      `
-        SELECT
-          id,
-          title,
-          description,
-          tags_json,
-          licenses_json,
-          source_url,
-          metadata_edited,
-          upload_date,
-          original_name,
-          stored_name,
-          file_type,
-          hash,
-          thumbhash,
-          mime_type,
-          size,
-          category,
-          preview_kind,
-          width,
-          height
-        FROM assets
-        WHERE hash = ?
-        LIMIT 1
-      `,
-    )
-    .get(incomingHash) as AssetRow | undefined;
-  const duplicate = duplicateRow ? rowToAssetRecord(duplicateRow) : undefined;
-  if (duplicate) {
-    throw new DuplicateAssetError(duplicate);
-  }
+  const matches = await uploadMatches(database, params.fileName, incomingHash);
+  if (matches.length) throw new UploadConflictError(matches);
 
   const id = randomUUID();
   const ext = path.extname(params.fileName);
@@ -627,7 +633,14 @@ export async function saveAsset(params: {
   try {
     await writeFile(getStoredFilePath(storedName), params.bytes);
     if (thumbnail) await writeFile(getThumbnailPath(storedName), thumbnail.bytes);
-    await insertRecord(database, record);
+    await database.transaction(async transaction => {
+      // Serialize conflict detection and insertion, including concurrent same-name uploads.
+      if (process.env.DATABASE_BACKEND === 'postgres') await transaction.prepare('LOCK TABLE assets IN SHARE ROW EXCLUSIVE MODE').run();
+      const matches = await uploadMatches(transaction, params.fileName, incomingHash);
+      if (matches.length) throw new UploadConflictError(matches);
+      await insertRecord(transaction, record);
+      await appendRevision(transaction, record, 'created', params);
+    });
   } catch (errorValue) {
     await deleteStoredFiles(storedName);
 
@@ -720,37 +733,45 @@ export async function updateAssetMetadata(
     licenses: string[];
     sourceUrl: string;
   },
+  options: MutationOptions = {},
 ): Promise<AssetRecord | undefined> {
   await ensureStorage();
   const database = await getDb();
-  const result = await database
-    .prepare(
-      `
-        UPDATE assets
-        SET
-          title = @title,
-          description = @description,
-          tags_json = @tags_json,
-          licenses_json = @licenses_json,
-          source_url = @source_url,
-          metadata_edited = 1
-        WHERE id = @id
-      `,
-    )
-    .run({
-      id,
-      title: updates.title,
-      description: updates.description,
-      tags_json: JSON.stringify(updates.tags),
-      licenses_json: JSON.stringify(updates.licenses),
-      source_url: safeSourceUrl(updates.sourceUrl),
-    });
+  return database.transaction(async transaction => {
+    const current = await lockAsset(transaction, id);
+    if (!current) return undefined;
+    await baseline(transaction, current, options);
+    const result = await transaction
+      .prepare(
+        `
+          UPDATE assets
+          SET
+            title = @title,
+            description = @description,
+            tags_json = @tags_json,
+            licenses_json = @licenses_json,
+            source_url = @source_url,
+            metadata_edited = 1
+          WHERE id = @id
+        `,
+      )
+      .run({
+        id,
+        title: updates.title,
+        description: updates.description,
+        tags_json: JSON.stringify(updates.tags),
+        licenses_json: JSON.stringify(updates.licenses),
+        source_url: safeSourceUrl(updates.sourceUrl),
+      });
 
-  if (result.changes === 0) {
-    return undefined;
-  }
+    if (result.changes === 0) {
+      return undefined;
+    }
 
-  return getAssetById(id);
+    const updated = rowToAssetRecord(await transaction.prepare('SELECT * FROM assets WHERE id = ?').get(id) as AssetRow);
+    await appendRevision(transaction, updated, 'metadata', options);
+    return updated;
+  });
 }
 
 export async function replaceAssetFile(
@@ -761,6 +782,7 @@ export async function replaceAssetFile(
     size: number;
     bytes: Uint8Array;
   },
+  options: MutationOptions & { mode?: "replace" | "new-version" } = {},
 ): Promise<AssetRecord | undefined> {
   await ensureStorage();
   const database = await getDb();
@@ -834,7 +856,6 @@ export async function replaceAssetFile(
     throw new DuplicateAssetError(duplicate);
   }
 
-  const current = rowToAssetRecord(currentRow);
   const ext = path.extname(replacement.fileName);
   const storedName = `${id}-${randomUUID()}${ext}`;
   const category = getCategory(replacement.fileName, replacement.mimeType);
@@ -869,7 +890,11 @@ export async function replaceAssetFile(
   try {
     await writeFile(getStoredFilePath(storedName), replacement.bytes);
     if (thumbnail) await writeFile(getThumbnailPath(storedName), thumbnail.bytes);
-    await database
+    await database.transaction(async transaction => {
+      const latest = await lockAsset(transaction, id);
+      if (!latest) throw new RevisionConflictError();
+      await baseline(transaction, latest, options);
+      await transaction
       .prepare(
         `
           UPDATE assets
@@ -908,6 +933,9 @@ export async function replaceAssetFile(
         height: height ?? null,
         upload_date: uploadDate,
       });
+      const updated = rowToAssetRecord(await transaction.prepare('SELECT * FROM assets WHERE id = ?').get(id) as AssetRow);
+      await appendRevision(transaction, updated, options.mode === 'new-version' ? 'new-version' : 'replaced', options);
+    });
   } catch (errorValue) {
     await deleteStoredFiles(storedName);
     const message =
@@ -949,24 +977,51 @@ export async function replaceAssetFile(
     throw errorValue;
   }
 
-  await deleteStoredFiles(current.storedName);
   return getAssetById(id);
 }
 
 export async function deleteAsset(id: string): Promise<boolean> {
   await ensureStorage();
   const database = await getDb();
-  const row = await database
-    .prepare("SELECT stored_name FROM assets WHERE id = ? LIMIT 1")
-    .get(id) as { stored_name: string } | undefined;
-
-  if (!row) {
-    return false;
-  }
-
-  await database.prepare("DELETE FROM assets WHERE id = ?").run(id);
-  await deleteStoredFiles(row.stored_name);
+  const storedNames = await database.transaction(async transaction => {
+    const current = await lockAsset(transaction, id);
+    if (!current) return undefined;
+    const rows = await transaction.prepare('SELECT snapshot_json FROM asset_revisions WHERE asset_id = ?').all(id) as Array<{ snapshot_json: string }>;
+    const names = new Set([current.storedName, ...rows.map(row => (JSON.parse(row.snapshot_json) as AssetRecord).storedName)]);
+    await transaction.prepare('DELETE FROM asset_revisions WHERE asset_id = ?').run(id);
+    await transaction.prepare('DELETE FROM assets WHERE id = ?').run(id);
+    return names;
+  });
+  if (!storedNames) return false;
+  await Promise.all([...storedNames].map(deleteStoredFiles));
   return true;
+}
+
+export async function readAssetHistory(id: string, offset = 0, limit = 50): Promise<{ total: number; revisions: AssetRevision[] } | undefined> {
+  await ensureStorage();
+  const database = await getDb();
+  // Lazily establish an accurate baseline for pre-history installations.
+  return database.transaction(async transaction => {
+    const current = await lockAsset(transaction, id);
+    if (!current) return undefined;
+    await baseline(transaction, current, {});
+    const count = await transaction.prepare('SELECT COUNT(*) AS total FROM asset_revisions WHERE asset_id = ?').get(id) as { total: number };
+    const rows = await transaction.prepare('SELECT * FROM asset_revisions WHERE asset_id = ? ORDER BY revision DESC LIMIT ? OFFSET ?').all(id, limit, offset) as Array<{
+      revision: number; version: number; operation: RevisionOperation; created_at: string; actor_json: string | null; note: string; snapshot_json: string;
+    }>;
+    return { total: Number(count.total), revisions: rows.map(row => {
+      const record = JSON.parse(row.snapshot_json) as AssetRecord;
+      const base = `/api/assets/${encodeURIComponent(id)}/versions/${row.revision}`;
+      return { revision: row.revision, version: row.version, operation: row.operation, createdAt: row.created_at,
+        actor: row.actor_json ? JSON.parse(row.actor_json) as RevisionActor : null, note: row.note,
+        asset: { ...record, storedName: '', fileUrl: base + '/file', downloadUrl: base + '/download', textPreviewUrl: base + '/text', thumbnailUrl: record.thumbhash ? base + '/thumbnail' : undefined } };
+    }) };
+  });
+}
+export async function getAssetRevision(id: string, revision: number): Promise<AssetRecord | undefined> {
+  await ensureStorage();
+  const row = await (await getDb()).prepare('SELECT snapshot_json FROM asset_revisions WHERE asset_id = ? AND revision = ?').get(id, revision) as { snapshot_json: string } | undefined;
+  return row ? JSON.parse(row.snapshot_json) as AssetRecord : undefined;
 }
 
 export function getStoredFilePath(storedName: string): string {

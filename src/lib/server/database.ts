@@ -26,6 +26,13 @@ const schema = `
   );
   CREATE INDEX IF NOT EXISTS idx_assets_upload_date ON assets(upload_date DESC);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_hash ON assets(hash);
+  CREATE TABLE IF NOT EXISTS asset_revisions (
+    asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL, version INTEGER NOT NULL,
+    operation TEXT NOT NULL, created_at TEXT NOT NULL,
+    actor_json TEXT, note TEXT NOT NULL, snapshot_json TEXT NOT NULL,
+    PRIMARY KEY (asset_id, revision)
+  );
   CREATE TABLE IF NOT EXISTS oidc_transactions (
     id_hash TEXT PRIMARY KEY, state TEXT NOT NULL, verifier TEXT NOT NULL,
     nonce TEXT NOT NULL, return_path TEXT NOT NULL, expires_at BIGINT NOT NULL
@@ -63,10 +70,11 @@ export async function createDatabase(options: {
     const filename = options.sqlitePath ?? path.join(process.cwd(), "data/assets.db");
     await mkdir(path.dirname(filename), { recursive: true });
     const sqlite = new DatabaseSync(filename);
-    sqlite.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;");
+    sqlite.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;");
     sqlite.exec(schema);
     const columns = sqlite.prepare("PRAGMA table_info(assets)").all() as Array<{ name: string }>;
     if (!columns.some(column => column.name === "thumbhash")) sqlite.exec("ALTER TABLE assets ADD COLUMN thumbhash TEXT");
+    let transactionTail = Promise.resolve();
     const database: Database = {
       prepare(sql) {
         const statement = sqlite.prepare(sql);
@@ -78,15 +86,21 @@ export async function createDatabase(options: {
         };
       },
       async transaction(fn) {
-        sqlite.exec("BEGIN IMMEDIATE");
+        const previous = transactionTail;
+        let release!: () => void;
+        transactionTail = new Promise<void>(resolve => { release = resolve; });
+        await previous;
         try {
-          const result = await fn(database);
-          sqlite.exec("COMMIT");
-          return result;
-        } catch (error) {
-          sqlite.exec("ROLLBACK");
-          throw error;
-        }
+          sqlite.exec("BEGIN IMMEDIATE");
+          try {
+            const result = await fn(database);
+            sqlite.exec("COMMIT");
+            return result;
+          } catch (error) {
+            sqlite.exec("ROLLBACK");
+            throw error;
+          }
+        } finally { release(); }
       },
       close: async () => sqlite.close(),
     };

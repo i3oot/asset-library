@@ -28,7 +28,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   if (event.locals.nativeAuth || event.url.pathname.startsWith('/auth/')) response.headers.set('Cache-Control', 'private, no-store');
   if (event.url.pathname.startsWith('/api/')) {
     response.headers.set('Cache-Control', 'private, no-store');
-    if (/^\/api\/assets\/[^/]+\/(file|download|thumbnail)$/.test(event.url.pathname)) {
+    if (/^\/api\/assets\/[^/]+\/(?:versions\/[^/]+\/)?(file|download|thumbnail)$/.test(event.url.pathname)) {
       response.headers.set('Content-Security-Policy', "sandbox; default-src 'none'; frame-ancestors 'none'");
     }
   }

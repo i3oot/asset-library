@@ -298,12 +298,54 @@ published. It merges trusted build configuration and is absent from production
 dependencies. Do not feed untrusted configuration to the build. Track the upstream
 fix rather than following npm's suggested downgrade to pre-release SvelteKit.
 
+# Artifact versions and change history
+
+Open an asset's metadata dialog and choose **Version History** to see every
+recorded file and metadata update, newest first. Entries include the version number,
+change number, timestamp, authenticated author, optional note, full metadata,
+SHA-256, server preview when available, and a download of the exact historical bytes.
+History is paginated and survives restarts on both SQLite and PostgreSQL.
+
+When an upload matches an existing filename (case-insensitive) or content hash,
+choose its target asset and either **Save New Version** or **Replace Current**:
+
+- New Version increments the file version number.
+- Replace Current retains the version number and records a replacement event.
+- Both preserve previous bytes and previews in history, and retain existing metadata.
+- Cancel Upload leaves the existing asset unchanged.
+
+To update an asset with a differently named file, use **Upload File Update** in its
+metadata dialog; the same decision is required. Multiple matching assets require
+an explicit target selection. Concurrent changes cause a conflict instead of
+silently overwriting a reviewed revision. Metadata edits create their own change
+entries without increasing the file version number. Existing installations receive
+a baseline of their currently available state; earlier deleted files cannot be
+reconstructed. Unauthenticated installations record a null author, never an invented
+identity. Full history consumes storage; no automatic history pruning is enabled.
+Deleting an entire asset deletes all of its revisions and stored files; the existing
+confirmation explicitly says so. There is no separate historical-delete API.
+
+`GET /api/assets/{id}/versions?offset=0&limit=50` lists history. Returned revision
+links address `/api/assets/{id}/versions/{revision}/{download,file,text,thumbnail}`.
+All routes retain authentication, sandboxing and private cache policy. Revision
+numbers identify immutable snapshots; version numbers describe file releases.
+`POST /api/assets` returns `409 upload_conflict` with candidate assets and latest
+revisions when an upload needs a decision. To save an update, submit `targetAssetId`,
+`mode` (`replace` or `new-version`), and `expectedRevision` together, plus an optional
+`note`. Stale decisions return `409 revision_conflict`. The legacy file PATCH route
+defaults to preserving a new version when no mode is supplied. SQLite-to-PostgreSQL
+migration now copies and verifies history as well as current metadata; stored files
+must still be transferred separately in maintenance mode.
+Recovery tests take a real SQLite backup with its coordinated upload files, restore
+it into a separate app, and also migrate that backup into an isolated PostgreSQL
+schema in CI. Both old and current downloads are verified after restoration.
+
 # WebMCP and Codex
 
-The library registers six imperative WebMCP tools in the active, top-level page:
+The library registers seven imperative WebMCP tools in the active, top-level page:
 `asset_library_search`, `asset_library_get_asset`, `asset_library_read_text`,
 `asset_library_show_asset`, `asset_library_update_metadata`, and
-`asset_library_import_text`. Search is paginated (maximum 50 results), text previews
+`asset_library_import_text`, and `asset_library_history`. Search/history are paginated (maximum 50 results), text previews
 are capped at 10,000 characters, and text imports at 256 KiB UTF-8. Binary files,
 3D assets and animations use the existing file picker. There is no agent delete
 tool or tool for credentials/AI configuration. Metadata and file text are untrusted
@@ -324,6 +366,10 @@ UI. Tools reuse same-origin authenticated APIs; no tokens are exposed to agents.
 They are removed on navigation/logout, and pending requests are aborted. Metadata
 updates preserve omitted fields and require a real license. Uploads may trigger the
 configured AI metadata integration, just like uploads through the UI.
+History is readable through WebMCP; text imports can update an explicitly selected
+asset using `targetAssetId`, `mode` and `expectedRevision` after the user chooses
+replacement or a new version. Conflicts return candidate metadata and the current
+revision; tools must not infer replacement permission from a conflicting filename.
 Native Chromium WebMCP discovery/invocation, OIDC gating, mutations, validation,
 session expiry and the unsupported-browser path are exercised in browser tests.
 

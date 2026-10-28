@@ -35,3 +35,15 @@ export interface AssetView extends AssetRecord {
   textPreviewUrl: string;
   thumbnailUrl?: string;
 }
+
+export type RevisionActor = { subject: string; issuer: string; name: string };
+export type RevisionOperation = 'baseline' | 'created' | 'metadata' | 'new-version' | 'replaced';
+export interface AssetRevision {
+  revision: number;
+  version: number;
+  operation: RevisionOperation;
+  createdAt: string;
+  actor: RevisionActor | null;
+  note: string;
+  asset: AssetView;
+}

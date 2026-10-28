@@ -273,6 +273,16 @@ Run `npm run check` and `npm test`. Set `TEST_CHROMIUM_PATH` to a Chromium binar
 to include the actual server-rendered model test. Set `TEST_DATABASE_URL` to a dedicated disposable
 PostgreSQL database to include PostgreSQL tests (these tests delete its assets).
 CI runs both backends. `npm audit` checks known advisories, not every security risk.
+CI enforces `npm audit --omit=dev` and scans both runtime images with Trivy,
+rejecting fixable HIGH/CRITICAL findings. Runtime images omit npm, npx, Corepack
+and Yarn after dependency installation.
+
+As of 2026-10-28, full development audits also report
+[GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4)
+in `deepmerge@4.3.1`, through the Svelte Vite plugin. No patched release is
+published. It merges trusted build configuration and is absent from production
+dependencies. Do not feed untrusted configuration to the build. Track the upstream
+fix rather than following npm's suggested downgrade to pre-release SvelteKit.
 
 # Contributing
 

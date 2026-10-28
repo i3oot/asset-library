@@ -1039,6 +1039,7 @@
   .asset-history { padding-left: 1.5rem; }
   .asset-history li { border-bottom: 1px solid #8885; padding: 1rem 0; }
   .asset-history dt { font-weight: 600; }
+  .asset-history a { color: inherit; text-decoration: underline; }
   .asset-history dd { margin: 0 0 0.5rem; overflow-wrap: anywhere; }
   .agent-tools-status { margin: 0.5rem 1rem; font-size: 0.8rem; opacity: 0.7; }
 </style>

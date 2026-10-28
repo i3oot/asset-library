@@ -96,6 +96,8 @@
 
 <style>
   .panel {
+    color: var(--app-text);
+    background: var(--backgroundLightOpaque);
     width: min(420px, calc(100% - 2rem));
     max-width: 420px;
     max-height: calc(100dvh - 2rem);

@@ -43,6 +43,22 @@ test('authenticated browser asks new-version/replace/cancel and displays immutab
   await page.getByRole('button', { name: 'Version History', exact: true }).click();
   await page.getByRole('heading', { name: 'Version 2 · new-version · Change #2', exact: true }).waitFor();
   assert.ok(await page.getByText('Test User', { exact: false }).count());
+  // Native dialog defaults can disagree with the application's theme.
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
+    const colors = await page.getByRole('dialog', { name: 'Asset version history' }).evaluate(element => {
+      const style = getComputedStyle(element);
+      return { foreground: style.color, background: style.backgroundColor, link: getComputedStyle(element.querySelector('a')).color };
+    });
+    const luminance = color => color.match(/[\d.]+/g).slice(0, 3).map(Number).map(channel => {
+      const value = channel / 255;
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+    for (const foreground of [colors.foreground, colors.link]) {
+      const values = [luminance(foreground), luminance(colors.background)].sort((a, b) => a - b);
+      assert.ok((values[1] + 0.05) / (values[0] + 0.05) >= 4.5, `${theme} history text/link contrast is too low`);
+    }
+  }
   await page.getByRole('button', { name: 'Close History', exact: true }).click();
   await page.getByRole('dialog', { name: 'Edit asset metadata' }).locator('input[type=file]').setInputFiles({ name: 'history.txt', mimeType: 'text/plain', buffer: Buffer.from('corrected version two') });
   await page.getByRole('button', { name: 'Replace Current', exact: true }).click();

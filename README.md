@@ -363,8 +363,9 @@ Then ask Codex to use the library tools, for example: “Find the model assets t
 vehicle and open the first preview.” No separate MCP server or token is required.
 See [OpenAI's WebMCP instructions](https://learn.chatgpt.com/docs/webmcp).
 Codex CLI and external-browser automation do not automatically gain these tools;
-the consumer must support WebMCP. The page reports whether its browser can register
-the tools. Browser API availability alone does not prove an agent consumer is enabled.
+the consumer must support WebMCP. Unsupported browsers show a dismissible setup
+toast once per tab session, with a setup-guide button; working support is silent.
+Browser API availability alone does not prove an agent consumer is enabled.
 
 The implementation prefers `document.modelContext` and supports the older
 `navigator.modelContext` registration API. Browsers without WebMCP retain the normal

@@ -18,8 +18,12 @@ test('native WebMCP exposes authenticated library tools and enforces bounded sam
   await page.goto(app.origin + '/auth/signed-out');
   assert.deepEqual(await page.webmcp.tools(), []);
   await page.goto(app.origin);
-  await page.getByText('7 agent tools available via WebMCP.', { exact: true }).waitFor();
-  const tools = await page.webmcp.tools();
+  let tools = [];
+  for (let attempt = 0; attempt < 50; attempt++) {
+    tools = await page.webmcp.tools();
+    if (tools.length === 7) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
   assert.equal(tools.length, 7);
   assert.ok(tools.every(tool => tool.name.startsWith('asset_library_')));
   assert.ok(!tools.some(tool => /delete|config|secret/.test(tool.name)));
@@ -84,7 +88,14 @@ test('library remains usable when WebMCP is disabled', { skip: !process.env.TEST
   const page = await browser.newPage();
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(app.origin);
-  await page.getByText('Agent tools require a browser with WebMCP support.', { exact: true }).waitFor();
+  const notice = page.locator('.agent-support-toast');
+  await page.getByText('Agent tools unavailable', { exact: true }).waitFor();
+  assert.equal(await page.locator('.agent-tools-status').count(), 0);
+  await notice.locator('[data-close-button]').click();
+  await notice.waitFor({ state: 'hidden' });
+  await page.reload();
+  await page.getByRole('heading', { name: 'Asset Library', exact: true }).waitFor();
+  assert.equal(await notice.count(), 0);
   assert.ok(await page.locator('input[type="file"]').count());
   assert.deepEqual(errors, []);
 });

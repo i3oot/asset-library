@@ -56,11 +56,12 @@ async function assetById(assetId: string, signal?: AbortSignal) {
 }
 
 /** Register only in the active first-party page. Aborting removes tools and pending requests. */
-export function mountWebMcp(callbacks: Callbacks, status: (value: string) => void): () => void {
+export type WebMcpStatus = 'available' | 'unsupported' | 'failed';
+export function mountWebMcp(callbacks: Callbacks, status: (value: WebMcpStatus) => void): () => void {
   const available = (document as Document & { modelContext?: ModelContext }).modelContext
     ?? (navigator as Navigator & { modelContext?: ModelContext }).modelContext;
   if (!available || window.top !== window) {
-    status('Agent tools require a browser with WebMCP support.');
+    status('unsupported');
     return () => {};
   }
   const context = available;
@@ -166,8 +167,8 @@ export function mountWebMcp(callbacks: Callbacks, status: (value: string) => voi
       return publicAsset(result.asset);
     });
   void Promise.all(pending).then(() => {
-    if (!lifetime.signal.aborted) status('7 agent tools available via WebMCP.');
-    else if (failed) status('Agent tools could not be registered in this browser.');
+    if (!lifetime.signal.aborted) status('available');
+    else if (failed) status('failed');
   });
   // A same-origin logout navigates away; revoke tools immediately even if a consumer retains handles.
   window.addEventListener('pagehide', stop);

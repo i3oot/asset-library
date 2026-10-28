@@ -3,7 +3,7 @@
   import Fuse from "fuse.js";
   import { toast } from "svelte-sonner";
   import { onMount } from "svelte";
-  import { mountWebMcp } from "$lib/services/webmcp";
+  import { mountWebMcp, type WebMcpStatus } from "$lib/services/webmcp";
   import { replaceState } from "$app/navigation";
   import { browser } from "$app/env";
   import * as publicEnv from "$app/env/public";
@@ -44,7 +44,25 @@
   let uploadChangeNote = '';
   let resolveUploadChoice: ((choice: UploadDecision | null) => void) | null = null;
   let decisionTail = Promise.resolve();
-  let agentToolsStatus = "Checking agent tool support…";
+  function notifyAgentSupport(status: WebMcpStatus): void {
+    if (status === 'available') return;
+    const key = `asset-library:webmcp-notice:${status}`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, 'shown');
+    } catch { /* Storage restrictions must not prevent the library from loading. */ }
+    toast.info(status === 'unsupported' ? 'Agent tools unavailable' : 'Agent tools could not connect', {
+      id: 'asset-library-webmcp-support',
+      description: status === 'unsupported'
+        ? 'This browser doesn’t support WebMCP yet. Use a compatible browser to connect your agent.'
+        : 'Your library is ready, but this browser couldn’t register its agent tools. Reload to try again.',
+      class: 'toast agent-support-toast',
+      position: 'bottom-right',
+      closeButton: true,
+      duration: 9000,
+      action: { label: 'Setup guide', onClick: () => { window.open('https://learn.chatgpt.com/docs/webmcp', '_blank', 'noopener,noreferrer'); } },
+    });
+  }
   const SORT_MODE_OPTIONS = [
     { value: "best-match", label: "Best Match" },
     { value: "newest", label: "Newest" },
@@ -1004,7 +1022,7 @@
   }
 
   onMount(loadAssets);
-  onMount(() => mountWebMcp({ changed: loadAssets, show: startEdit }, value => { agentToolsStatus = value; }));
+  onMount(() => mountWebMcp({ changed: loadAssets, show: startEdit }, notifyAgentSupport));
   onMount(loadAiConfig);
   onMount(initializeTheme);
   onMount(onWindowScroll);
@@ -1033,15 +1051,12 @@
   }
 </script>
 
-<p class="agent-tools-status" role="status">{agentToolsStatus}</p>
-
 <style>
   .asset-history { padding-left: 1.5rem; }
   .asset-history li { border-bottom: 1px solid #8885; padding: 1rem 0; }
   .asset-history dt { font-weight: 600; }
   .asset-history a { color: inherit; text-decoration: underline; }
   .asset-history dd { margin: 0 0 0.5rem; overflow-wrap: anywhere; }
-  .agent-tools-status { margin: 0.5rem 1rem; font-size: 0.8rem; opacity: 0.7; }
 </style>
 
 <svelte:window

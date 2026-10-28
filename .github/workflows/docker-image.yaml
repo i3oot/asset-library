@@ -123,3 +123,23 @@ jobs:
           docker exec asset-library-app-smoke node scripts/smoke-app.mjs
           docker run --detach --name asset-library-renderer-smoke --network none --read-only --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 1 --tmpfs /tmp:rw,size=536870912 --shm-size 128m -e RENDERER_DIAGNOSTICS=ci-smoke -e DEBUG=pw:browser "$RENDERER_IMAGE"
           docker exec asset-library-renderer-smoke node scripts/smoke-renderer.mjs || { docker logs asset-library-renderer-smoke; exit 1; }
+
+      - name: Scan app image for fixable high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.1
+          image-ref: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Scan isolated renderer image for fixable high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.1
+          image-ref: ghcr.io/${{ github.repository }}-renderer:sha-${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'

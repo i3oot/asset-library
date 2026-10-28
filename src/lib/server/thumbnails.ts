@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import { rgbaToThumbHash } from "thumbhash";
+import { signRenderRequest } from "../../../renderer/request-auth.mjs";
 
 sharp.cache(false);
 sharp.concurrency(2);
@@ -20,7 +21,9 @@ export async function generateAssetThumbnail(bytes: Uint8Array, kind: string, fi
   const extension = filename.split(".").pop()?.toLowerCase();
   if (!extension || !["glb", "gltf", "obj", "stl", "fbx"].includes(extension)) return undefined;
   const response = await fetch(new URL("/render", process.env.MODEL_THUMBNAIL_URL), {
-    method: "POST", headers: { "Content-Type": "application/octet-stream", "X-Model-Extension": extension },
+    method: "POST", headers: { "Content-Type": "application/octet-stream", "X-Model-Extension": extension,
+      ...(process.env.MODEL_THUMBNAIL_SIGNING_KEY ? signRenderRequest(bytes, extension, process.env.MODEL_THUMBNAIL_SIGNING_KEY) : {}),
+    },
     body: Buffer.from(bytes), signal: AbortSignal.timeout(45_000), redirect: "error",
   });
   if (!response.ok || response.headers.get("content-type") !== "image/png") throw new Error("Model renderer unavailable");

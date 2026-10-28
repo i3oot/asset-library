@@ -49,3 +49,10 @@ RUN apk add --no-cache chromium chromium-swiftshader
 USER node
 ENV PORT=8080
 CMD ["node", "renderer/server.mjs"]
+
+# Trusted initializer only; exits before the capability-free renderer starts.
+FROM alpine:3.24 AS renderer-network-guard
+RUN apk add --no-cache iptables
+COPY renderer/firewall.sh /usr/local/bin/renderer-firewall
+RUN chmod 0555 /usr/local/bin/renderer-firewall
+CMD ["/usr/local/bin/renderer-firewall"]

@@ -114,16 +114,32 @@ jobs:
           push: true
           tags: ghcr.io/${{ github.repository }}-renderer:sha-${{ github.sha }}
 
+      - name: Build and push renderer firewall initializer
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: renderer-network-guard
+          push: true
+          tags: ghcr.io/${{ github.repository }}-renderer-network-guard:sha-${{ github.sha }}
+
       - name: Smoke-test published images under workload isolation
         env:
           APP_IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
           RENDERER_IMAGE: ghcr.io/${{ github.repository }}-renderer:sha-${{ github.sha }}
+          GUARD_IMAGE: ghcr.io/${{ github.repository }}-renderer-network-guard:sha-${{ github.sha }}
         run: |
-          trap 'docker rm -f asset-library-app-smoke asset-library-renderer-smoke >/dev/null 2>&1 || true' EXIT
+          trap 'docker rm -f asset-library-app-smoke asset-library-renderer-smoke asset-library-network-smoke >/dev/null 2>&1 || true' EXIT
           docker run --detach --name asset-library-app-smoke --network none --read-only --cap-drop ALL --security-opt no-new-privileges --memory 4g --cpus 1 --tmpfs /tmp:rw,size=536870912 --tmpfs /app/data:rw,uid=1000,gid=1000,size=536870912 -e ORIGIN=http://127.0.0.1:3000 -e AI_ENABLED=false "$APP_IMAGE"
           docker exec asset-library-app-smoke node scripts/smoke-app.mjs
-          docker run --detach --name asset-library-renderer-smoke --network none --read-only --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 1 --tmpfs /tmp:rw,size=536870912 --shm-size 128m -e RENDERER_DIAGNOSTICS=ci-smoke -e DEBUG=pw:browser "$RENDERER_IMAGE"
+          docker run --detach --name asset-library-network-smoke --read-only --cap-drop ALL --cap-add NET_ADMIN --security-opt no-new-privileges --tmpfs /tmp --entrypoint /bin/sh "$GUARD_IMAGE" -c '/usr/local/bin/renderer-firewall && touch /tmp/firewall-ready && exec sleep 300'
+          for attempt in $(seq 1 30); do docker exec asset-library-network-smoke test -f /tmp/firewall-ready && break || sleep 1; done
+          docker exec asset-library-network-smoke test -f /tmp/firewall-ready
+          # Reuse the guarded namespace with no renderer capabilities, as in a pod.
+          docker run --detach --name asset-library-renderer-smoke --network container:asset-library-network-smoke --read-only --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 1 --tmpfs /tmp:rw,size=536870912 --shm-size 128m -e RENDERER_DIAGNOSTICS=ci-smoke -e DEBUG=pw:browser "$RENDERER_IMAGE"
           docker exec asset-library-renderer-smoke node scripts/smoke-renderer.mjs || { docker logs asset-library-renderer-smoke; exit 1; }
+          docker exec asset-library-renderer-smoke node --input-type=module -e 'import net from "node:net"; const socket=net.createConnection({host:"1.1.1.1",port:443}); socket.setTimeout(3000); socket.once("connect",()=>process.exit(1)); socket.once("timeout",()=>{socket.destroy();process.exit(0)}); socket.once("error",()=>process.exit(0));'
+          guard_ip=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' asset-library-network-smoke)
+          docker run --rm "$APP_IMAGE" node --input-type=module -e 'const response=await fetch("http://"+process.argv[1]+":8080/health",{signal:AbortSignal.timeout(5000)}); if(!response.ok)process.exit(1)' "$guard_ip"
 
       - name: Scan app image for fixable high and critical vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -140,6 +156,16 @@ jobs:
         with:
           version: v0.76.1
           image-ref: ghcr.io/${{ github.repository }}-renderer:sha-${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Scan renderer firewall initializer
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.1
+          image-ref: ghcr.io/${{ github.repository }}-renderer-network-guard:sha-${{ github.sha }}
           scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true

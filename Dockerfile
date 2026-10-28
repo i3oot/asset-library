@@ -21,7 +21,11 @@ ENV DO_NOT_TRACK=1
 
 # Copy only production deps
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts
+RUN npm ci --omit=dev --ignore-scripts \
+    && npm cache clean --force \
+    && rm -rf /root/.npm /usr/local/lib/node_modules /opt/yarn* \
+       /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+       /usr/local/bin/yarn /usr/local/bin/yarnpkg
 
 # Copy built app from builder
 COPY --from=builder /app/build ./build

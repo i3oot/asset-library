@@ -24,7 +24,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   response.headers.set('X-Content-Type-Options', 'nosniff');
   // Suppress cross-origin referrers while keeping same-origin POST form Origin headers.
   response.headers.set('Referrer-Policy', 'same-origin');
-  response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), tools=(self)');
   if (event.locals.nativeAuth || event.url.pathname.startsWith('/auth/')) response.headers.set('Cache-Control', 'private, no-store');
   if (event.url.pathname.startsWith('/api/')) {
     response.headers.set('Cache-Control', 'private, no-store');

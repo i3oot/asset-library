@@ -298,6 +298,35 @@ published. It merges trusted build configuration and is absent from production
 dependencies. Do not feed untrusted configuration to the build. Track the upstream
 fix rather than following npm's suggested downgrade to pre-release SvelteKit.
 
+# WebMCP and Codex
+
+The library registers six imperative WebMCP tools in the active, top-level page:
+`asset_library_search`, `asset_library_get_asset`, `asset_library_read_text`,
+`asset_library_show_asset`, `asset_library_update_metadata`, and
+`asset_library_import_text`. Search is paginated (maximum 50 results), text previews
+are capped at 10,000 characters, and text imports at 256 KiB UTF-8. Binary files,
+3D assets and animations use the existing file picker. There is no agent delete
+tool or tool for credentials/AI configuration. Metadata and file text are untrusted
+content, explicitly marked as such in tool annotations.
+
+Open the library in Codex's built-in browser, sign in through the normal OIDC flow,
+and enable Site Tools in Browser Permissions if available for your account/workspace.
+Then ask Codex to use the library tools, for example: “Find the model assets tagged
+vehicle and open the first preview.” No separate MCP server or token is required.
+See [OpenAI's WebMCP instructions](https://learn.chatgpt.com/docs/webmcp).
+Codex CLI and external-browser automation do not automatically gain these tools;
+the consumer must support WebMCP. The page reports whether its browser can register
+the tools. Browser API availability alone does not prove an agent consumer is enabled.
+
+The implementation prefers `document.modelContext` and supports the older
+`navigator.modelContext` registration API. Browsers without WebMCP retain the normal
+UI. Tools reuse same-origin authenticated APIs; no tokens are exposed to agents.
+They are removed on navigation/logout, and pending requests are aborted. Metadata
+updates preserve omitted fields and require a real license. Uploads may trigger the
+configured AI metadata integration, just like uploads through the UI.
+Native Chromium WebMCP discovery/invocation, OIDC gating, mutations, validation,
+session expiry and the unsupported-browser path are exercised in browser tests.
+
 # Contributing
 
 Contributions are very welcome! Just fork the repo and open a PR with your changes.

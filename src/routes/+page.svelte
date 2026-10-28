@@ -3,6 +3,7 @@
   import Fuse from "fuse.js";
   import { toast } from "svelte-sonner";
   import { onMount } from "svelte";
+  import { mountWebMcp } from "$lib/services/webmcp";
   import { replaceState } from "$app/navigation";
   import { browser } from "$app/env";
   import * as publicEnv from "$app/env/public";
@@ -33,6 +34,7 @@
     sort: "sort",
   } as const;
   const GITHUB_REPO_URL = "https://github.com/Kellojo/asset-library";
+  let agentToolsStatus = "Checking agent tool support…";
   const SORT_MODE_OPTIONS = [
     { value: "best-match", label: "Best Match" },
     { value: "newest", label: "Newest" },
@@ -941,6 +943,7 @@
   }
 
   onMount(loadAssets);
+  onMount(() => mountWebMcp({ changed: loadAssets, show: startEdit }, value => { agentToolsStatus = value; }));
   onMount(loadAiConfig);
   onMount(initializeTheme);
   onMount(onWindowScroll);
@@ -968,6 +971,12 @@
     syncUrlFromFilters();
   }
 </script>
+
+<p class="agent-tools-status" role="status">{agentToolsStatus}</p>
+
+<style>
+  .agent-tools-status { margin: 0.5rem 1rem; font-size: 0.8rem; opacity: 0.7; }
+</style>
 
 <svelte:window
   on:dragenter={onWindowDragEnter}

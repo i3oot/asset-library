@@ -357,10 +357,10 @@ are capped at 10,000 characters, and text imports at 256 KiB UTF-8. Binary files
 tool or tool for credentials/AI configuration. Metadata and file text are untrusted
 content, explicitly marked as such in tool annotations.
 
-WebMCP requires both a browser implementation and an agent connector that can invoke
-page tools. Browser support alone does not make tools available to Codex CLI. In a
-supported browser/connector, open the library and sign in through its normal OIDC
-flow. For Codex CLI use the separate OAuth MCP endpoint below.
+Open the library in Codex's built-in browser, sign in through the normal OIDC flow,
+and enable Site Tools in Browser Permissions if available for your account/workspace.
+Then ask Codex to use the library tools, for example: “Find the model assets tagged
+vehicle and open the first preview.” No separate MCP server or token is required.
 See [OpenAI's WebMCP instructions](https://learn.chatgpt.com/docs/webmcp).
 Codex CLI and external-browser automation do not automatically gain these tools;
 the consumer must support WebMCP. Unsupported browsers show a dismissible setup
@@ -379,47 +379,6 @@ replacement or a new version. Conflicts return candidate metadata and the curren
 revision; tools must not infer replacement permission from a conflicting filename.
 Native Chromium WebMCP discovery/invocation, OIDC gating, mutations, validation,
 session expiry and the unsupported-browser path are exercised in browser tests.
-
-# OAuth MCP for Codex CLI
-
-A native Streamable HTTP MCP endpoint is available at `/mcp` when
-`AUTH_MODE=oidc`, `MCP_ENABLED=true`, `MCP_RESOURCE_URL` (canonical HTTPS URL,
-ending in `/mcp`) and `MCP_OIDC_ISSUER_URL` (dedicated Authentik provider issuer)
-are configured. Keep the normal browser `ORIGIN` and native OIDC configuration.
-The CLI needs no WebMCP browser flag or extension.
-
-The protected-resource metadata is published at
-`/.well-known/oauth-protected-resource/mcp`. Configure a dedicated **public**
-Authentik client with its client ID equal to `MCP_RESOURCE_URL`, asymmetric RS256
-signing, per-provider issuer, authorization-code + refresh grants, 15-minute access
-tokens, and the `assets:read` and `assets:write` scopes. Require S256 PKCE and a
-strict loopback callback (including any callback suffix printed by Codex).
-Enforce the same user/group access policy as the native browser application.
-The deployment's versioned Authentik provisioning script implements these settings.
-No CLI client secret is required; existing deployment secrets remain SOPS-managed.
-
-For the i3oot test deployment:
-
-```bash
-codex mcp add asset-library --url https://asset-library-mcp.i3oot.de/mcp --oauth-client-id https://asset-library-mcp.i3oot.de/mcp --oauth-resource https://asset-library-mcp.i3oot.de/mcp
-codex mcp login asset-library --scopes openid,profile,offline_access,assets:read,assets:write
-```
-
-Complete the Authentik browser login/consent, then start a new Codex CLI session.
-Ask “Use asset-library to search model assets tagged vehicle and show their version
-history.” For read-only access request `assets:read` without `assets:write`.
-Codex manages the OAuth credentials; never paste bearer tokens into prompts.
-
-Seven tools cover search, metadata, history, bounded text reading, server-rendered
-image/3D previews, metadata updates and small text imports. `get_preview` returns
-an MCP image, replacing the browser-only `show_asset` action. Download links open
-the normal browser-authenticated library. Read-only grants expose only five read
-tools. Writes require an explicit write grant, licenses and revision checks;
-replacement versus new-version remains the user's choice. All returned asset
-content is untrusted data. No delete, AI settings, arbitrary URL-fetch or credential
-tools are exposed. The endpoint accepts only audience-bound access tokens from its
-configured issuer, never browser cookies or ID tokens. Every call is authenticated;
-there is no reusable MCP session ID. Keep WAF/CrowdSec enforced at the ingress.
 
 # Contributing
 

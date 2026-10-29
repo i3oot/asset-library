@@ -1,10 +1,7 @@
 import { authEnabled, authHealth, sessionUser } from '$lib/server/auth';
 import type { Handle } from '@sveltejs/kit/hooks';
-import { mcpRequest } from '$lib/server/mcp';
 
 export const handle: Handle = async ({ event, resolve }) => {
-  const mcp = await mcpRequest(event.request, event.url.pathname);
-  if (mcp) return mcp;
   const origin = event.request.headers.get('origin');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(event.request.method) && origin && origin !== event.url.origin) {
     return Response.json({ error: 'Cross-origin mutations are forbidden' }, { status: 403 });

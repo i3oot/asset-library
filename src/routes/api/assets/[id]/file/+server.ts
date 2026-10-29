@@ -1,11 +1,12 @@
+import { requestedAsset } from "$lib/server/asset-response";
 import { readFile } from "node:fs/promises";
 import { error, json, type RequestHandler } from "@sveltejs/kit";
 import {
   DuplicateAssetError,
-  getAssetById,
   getStoredFilePath,
   replaceAssetFile,
   toAssetView,
+  RevisionConflictError,
 } from "$lib/server/assets";
 
 const FILE_CACHE_CONTROL = "public, max-age=31536000, immutable";
@@ -41,18 +42,7 @@ function parseRangeHeader(
   return { start, end };
 }
 
-async function resolveAssetOrThrow(id: string | undefined) {
-  if (!id) {
-    throw error(400, "Missing asset id");
-  }
-
-  const asset = await getAssetById(id);
-  if (!asset) {
-    throw error(404, "Asset not found");
-  }
-
-  return asset;
-}
+const resolveAssetOrThrow = requestedAsset;
 
 function buildCacheHeaders(
   asset: Awaited<ReturnType<typeof resolveAssetOrThrow>>,
@@ -65,7 +55,7 @@ function buildCacheHeaders(
 }
 
 export const GET: RequestHandler = async ({ params, request }) => {
-  const asset = await resolveAssetOrThrow(params.id);
+  const asset = await resolveAssetOrThrow(params.id, params.revision);
 
   let bytes: Buffer;
   try {
@@ -115,7 +105,7 @@ export const GET: RequestHandler = async ({ params, request }) => {
 };
 
 export const HEAD: RequestHandler = async ({ params }) => {
-  const asset = await resolveAssetOrThrow(params.id);
+  const asset = await resolveAssetOrThrow(params.id, params.revision);
 
   return new Response(null, {
     headers: {
@@ -128,7 +118,7 @@ export const HEAD: RequestHandler = async ({ params }) => {
   });
 };
 
-export const PATCH: RequestHandler = async ({ params, request }) => {
+export const PATCH: RequestHandler = async ({ params, request, locals }) => {
   if (!params.id) {
     return json({ error: "Missing asset id." }, { status: 400 });
   }
@@ -139,6 +129,10 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
     return json({ error: "A replacement file is required." }, { status: 400 });
   }
 
+  const mode = form.get('mode') ?? 'new-version';
+  const expected = form.get('expectedRevision');
+  const note = form.get('note');
+  if (!['replace', 'new-version'].includes(String(mode)) || (expected !== null && (typeof expected !== 'string' || !/^[1-9]\d{0,8}$/.test(expected))) || (note !== null && (typeof note !== 'string' || note.length > 2000))) return json({ error: 'Invalid upload decision.' }, { status: 400 });
   const arrayBuffer = await fileValue.arrayBuffer();
 
   try {
@@ -147,7 +141,8 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
       mimeType: fileValue.type,
       size: fileValue.size,
       bytes: new Uint8Array(arrayBuffer),
-    });
+    }, { mode: mode as 'replace' | 'new-version', expectedRevision: expected === null ? undefined : Number(expected), note: note as string | undefined,
+      actor: locals.user ? { subject: locals.user.subject, issuer: locals.user.issuer, name: locals.user.name } : null });
 
     if (!updated) {
       return json({ error: "Asset not found." }, { status: 404 });
@@ -155,6 +150,7 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 
     return json({ asset: toAssetView(updated) });
   } catch (errorValue) {
+    if (errorValue instanceof RevisionConflictError) return json({ error: errorValue.message, code: 'revision_conflict' }, { status: 409 });
     if (errorValue instanceof DuplicateAssetError) {
       return json(
         {

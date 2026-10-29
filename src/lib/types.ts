@@ -20,6 +20,7 @@ export interface AssetRecord {
   storedName: string;
   fileType: string;
   hash?: string;
+  thumbhash?: string;
   mimeType: string;
   size: number;
   category: AssetCategory;
@@ -32,4 +33,17 @@ export interface AssetView extends AssetRecord {
   fileUrl: string;
   downloadUrl: string;
   textPreviewUrl: string;
+  thumbnailUrl?: string;
+}
+
+export type RevisionActor = { subject: string; issuer: string; name: string };
+export type RevisionOperation = 'baseline' | 'created' | 'metadata' | 'new-version' | 'replaced';
+export interface AssetRevision {
+  revision: number;
+  version: number;
+  operation: RevisionOperation;
+  createdAt: string;
+  actor: RevisionActor | null;
+  note: string;
+  asset: AssetView;
 }

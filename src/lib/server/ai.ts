@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { env } from "$env/dynamic/private";
+const env = process.env;
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText, Output } from "ai";
 import { z } from "zod";
@@ -113,13 +113,13 @@ function applyEnvOverrides(config: AiConfig): AiConfig {
 async function ensureConfigFile(): Promise<void> {
   await mkdir(dataRoot, { recursive: true });
   try {
-    await readFile(configPath, "utf8");
-  } catch {
-    await writeFile(configPath, JSON.stringify(defaultConfig, null, 2), "utf8");
+    await writeFile(configPath, JSON.stringify(defaultConfig, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
 }
 
-export async function getAiConfig(): Promise<AiConfig> {
+async function readFileConfig(): Promise<AiConfig> {
   await ensureConfigFile();
   const raw = await readFile(configPath, "utf8");
   const parsed = JSON.parse(raw) as Partial<AiConfig>;
@@ -142,16 +142,41 @@ export async function getAiConfig(): Promise<AiConfig> {
     ),
   };
 
-  return applyEnvOverrides(fileConfig);
+  return fileConfig;
+}
+
+export async function getAiConfig(): Promise<AiConfig> {
+  return applyEnvOverrides(await readFileConfig());
+}
+
+export function isAiConfigReadOnly(): boolean {
+  return parseEnvBoolean(env.AI_CONFIG_READONLY) === true;
+}
+
+export function publicAiConfig(config: AiConfig) {
+  return {
+    ...config,
+    apiKey: "",
+    apiKeyConfigured: Boolean(config.apiKey),
+    readOnly: isAiConfigReadOnly(),
+  };
 }
 
 export async function updateAiConfig(
   updates: Partial<AiConfig>,
 ): Promise<AiConfig> {
-  const current = await getAiConfig();
+  if (isAiConfigReadOnly()) {
+    throw new Error("AI configuration is managed by the server");
+  }
+  const current = await readFileConfig();
+  // Never persist environment overrides into the writable data directory.
+  const definedUpdates = Object.fromEntries(
+    Object.entries(updates).filter(([, value]) => value !== undefined),
+  );
   const merged: AiConfig = {
     ...current,
-    ...updates,
+    ...definedUpdates,
+    apiKey: updates.apiKey || current.apiKey,
     baseUrl: (updates.baseUrl ?? current.baseUrl).trim(),
     model: (updates.model ?? current.model).trim(),
     timeoutMs: Math.max(1_000, updates.timeoutMs ?? current.timeoutMs),
@@ -166,7 +191,7 @@ export async function updateAiConfig(
   };
 
   await writeFile(configPath, JSON.stringify(merged, null, 2), "utf8");
-  return merged;
+  return applyEnvOverrides(merged);
 }
 
 function sanitizeTag(value: string): string {
@@ -287,7 +312,6 @@ export async function generateAutoMetadata(params: {
       disableThinking: config.disableThinking,
       reasoningEffortRequested: reasoningRequested,
       category: params.category,
-      fileName: params.originalName,
     });
 
     const runGeneration = async (withReasoningEffort: boolean) => {
@@ -319,13 +343,14 @@ export async function generateAutoMetadata(params: {
       });
 
       return generateText({
-        model: provider(config.model),
+        model: provider.chat(config.model),
+        telemetry: { isEnabled: false, recordInputs: false, recordOutputs: false },
         output: Output.object({ schema: metadataSchema }),
         temperature: config.temperature,
         maxRetries: 1,
         abortSignal: controller.signal,
         providerOptions,
-        system:
+        instructions:
           "You generate asset metadata. You MUST follow the user's output contract exactly and return only valid JSON with keys tags and description.",
         prompt,
       });
@@ -376,7 +401,7 @@ export async function generateAutoMetadata(params: {
       model: config.model,
       disableThinking: config.disableThinking,
       reasoningEffortRequested: config.reasoningEffort || "(unset)",
-      error: error instanceof Error ? error.message : String(error),
+      error: "Upstream AI request failed",
       elapsedMs: elapsedMs(),
     });
     return {

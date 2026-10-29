@@ -26,3 +26,64 @@
 .toast[data-type="success"] {
   color: var(--success);
 }
+
+.toast.agent-support-toast {
+  position: relative;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: 0.25rem 0.75rem;
+  align-items: start;
+  padding: 1rem 2.25rem 1rem 1rem;
+  background: var(--backgroundLightOpaque);
+  color: var(--app-text);
+  border-color: var(--borderHoverColor);
+  border-inline-start: 3px solid var(--info);
+  border-radius: 14px;
+}
+
+.agent-support-toast [data-icon] {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  place-items: center;
+  color: var(--info);
+  background: color-mix(in srgb, var(--info) 12%, transparent);
+  border-radius: 10px;
+}
+
+.agent-support-toast [data-content] { grid-column: 2; display: grid; gap: 0.35rem; min-width: 0; }
+.agent-support-toast [data-title] { font-size: 0.875rem; line-height: 1.4; font-weight: 650; }
+.agent-support-toast [data-description] { color: var(--app-text-muted); font-size: 0.8rem; line-height: 1.5; }
+.agent-support-toast [data-button] {
+  grid-column: 2;
+  justify-self: start;
+  margin: 0.5rem 0 0;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--borderHoverColor);
+  border-radius: 7px;
+  background: var(--backgroundLight);
+  color: var(--app-text);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.agent-support-toast [data-close-button] {
+  position: absolute;
+  inset: 0.4rem 0.4rem auto auto;
+  transform: none;
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 0;
+  border-radius: 6px;
+  color: var(--app-text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+.agent-support-toast [data-button]:hover,
+.agent-support-toast [data-close-button]:hover { background: var(--surface-inset); color: var(--app-text); }
+.agent-support-toast button:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }

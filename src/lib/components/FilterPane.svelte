@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Icon from "@iconify/svelte";
+  import Icon from "$lib/components/Icon.svelte";
   import { slide } from "svelte/transition";
   import type { AssetCategory } from "$lib/types";
   import Button from "$lib/components/Button.svelte";

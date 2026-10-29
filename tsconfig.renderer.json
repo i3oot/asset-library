@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["renderer/scene.ts", "vite.thumbnails.config.ts"]
+}

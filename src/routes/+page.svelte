@@ -1,12 +1,16 @@
 <script lang="ts">
-  import Icon from "@iconify/svelte";
+  import type { PageData } from "./$types";
+  export let data: PageData;
+
+  import Icon from "$lib/components/Icon.svelte";
   import Fuse from "fuse.js";
   import { toast } from "svelte-sonner";
   import { onMount } from "svelte";
+  import { mountWebMcp, type WebMcpStatus } from "$lib/services/webmcp";
   import { replaceState } from "$app/navigation";
-  import { browser } from "$app/environment";
-  import { env as publicEnv } from "$env/dynamic/public";
-  import type { AssetCategory, AssetView } from "$lib/types";
+  import { browser } from "$app/env";
+  import * as publicEnv from "$app/env/public";
+  import type { AssetCategory, AssetView, AssetRevision } from "$lib/types";
   import AssetCard from "$lib/components/AssetCard.svelte";
   import Button from "$lib/components/Button.svelte";
   import Dialog from "$lib/components/Dialog.svelte";
@@ -18,7 +22,7 @@
   import TitleIconReel from "$lib/components/TitleIconReel.svelte";
   import {
     AssetLibraryApiService,
-    type AiConfig,
+    type AiConfig, UploadConflict, type UploadDecision, type UploadMatch,
   } from "$lib/services/asset-library-api";
   import {
     SourceLicensePrefillHelper,
@@ -33,6 +37,41 @@
     sort: "sort",
   } as const;
   const GITHUB_REPO_URL = "https://github.com/Kellojo/asset-library";
+  let historyAssetId: string | null = null;
+  let historyRows: AssetRevision[] = [];
+  let historyTotal = 0;
+  let historyBusy = false;
+  let historyError = '';
+  let uploadChoice: { file: File; matches: UploadMatch[] } | null = null;
+  let uploadChoiceTarget = '';
+  let uploadChangeNote = '';
+  let resolveUploadChoice: ((choice: UploadDecision | null) => void) | null = null;
+  let decisionTail = Promise.resolve();
+  let webMcpStatus: WebMcpStatus | 'checking' = 'checking';
+  let settingsSection: 'ai' | 'webmcp' = 'ai';
+  $: webMcpStatusLabel = webMcpStatus === 'available' ? 'Available'
+    : webMcpStatus === 'unsupported' ? 'Unsupported browser'
+    : webMcpStatus === 'failed' ? 'Registration failed' : 'Checking support';
+  function notifyAgentSupport(status: WebMcpStatus): void {
+    webMcpStatus = status;
+    if (status === 'available') return;
+    const key = `asset-library:webmcp-notice:${status}`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, 'shown');
+    } catch { /* Storage restrictions must not prevent the library from loading. */ }
+    toast.info(status === 'unsupported' ? 'Agent tools unavailable' : 'Agent tools could not connect', {
+      id: 'asset-library-webmcp-support',
+      description: status === 'unsupported'
+        ? 'This browser doesn’t support WebMCP yet. Use a compatible browser to connect your agent.'
+        : 'Your library is ready, but this browser couldn’t register its agent tools. Reload to try again.',
+      class: 'toast agent-support-toast',
+      position: 'bottom-right',
+      closeButton: true,
+      duration: 9000,
+      action: { label: 'Connection details', onClick: () => { settingsSection = 'webmcp'; aiSettingsOpen = true; } },
+    });
+  }
   const SORT_MODE_OPTIONS = [
     { value: "best-match", label: "Best Match" },
     { value: "newest", label: "Newest" },
@@ -132,7 +171,7 @@
   let showBackToTop = false;
   let editDialogRef: { requestClose: () => void } | null = null;
   let aiDialogRef: { requestClose: () => void } | null = null;
-  let aiConfig = {
+  let aiConfig: AiConfig = {
     enabled: false,
     baseUrl: "http://127.0.0.1:1234",
     model: "",
@@ -560,16 +599,61 @@
     void processUploadQueue();
   }
 
+  async function askUploadChoice(file: File, matches: UploadMatch[]): Promise<UploadDecision | null> {
+    const previous = decisionTail;
+    let release!: () => void;
+    decisionTail = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try {
+      uploadChoice = { file, matches };
+      uploadChoiceTarget = matches.length === 1 ? matches[0].asset.id : '';
+      uploadChangeNote = '';
+      return await new Promise<UploadDecision | null>(resolve => { resolveUploadChoice = resolve; });
+    } finally { release(); }
+  }
+  function finishUploadChoice(mode: UploadDecision['mode'] | null): void {
+    const target = uploadChoice?.matches.find(match => match.asset.id === uploadChoiceTarget);
+    if (mode && !target) return;
+    resolveUploadChoice?.(mode && target ? { targetAssetId: target.asset.id, expectedRevision: target.revision, mode, note: uploadChangeNote } : null);
+    resolveUploadChoice = null; uploadChoice = null;
+  }
   async function uploadSingleFile(upload: QueuedUpload): Promise<void> {
     const { file, sourceUrl, licenses } = upload;
     const form = new FormData();
     form.set("title", titleFromFileName(file.name));
-    form.set("tags", "");
-    form.set("sourceUrl", sourceUrl);
-    form.set("licenses", licenses.join(","));
-    form.set("file", file);
+    form.set("tags", ""); form.set("sourceUrl", sourceUrl);
+    form.set("licenses", licenses.join(",")); form.set("file", file);
+    // Ask before sending a potentially large same-name file. The server rechecks races/content duplicates.
+    const known = (await api.listAssets()).filter(asset => asset.originalName.toLowerCase() === file.name.toLowerCase());
+    let matches = await Promise.all(known.map(async asset => ({ asset, revision: (await api.history(asset.id)).revisions[0].revision })));
+    while (true) {
+      if (matches.length) {
+        const decision = await askUploadChoice(file, matches);
+        if (!decision) throw new Error(`Upload cancelled: ${file.name}`);
+        form.set('targetAssetId', decision.targetAssetId); form.set('mode', decision.mode);
+        form.set('expectedRevision', String(decision.expectedRevision)); form.set('note', decision.note);
+      }
+      try { await api.uploadAsset(form, file.name, () => {}); return; }
+      catch (error) {
+        if (!(error instanceof UploadConflict)) throw error;
+        matches = error.matches;
+      }
+    }
+  }
 
-    await api.uploadAsset(form, file.name, () => {});
+  async function openHistory(assetId: string): Promise<void> {
+    historyAssetId = assetId; historyRows = []; historyTotal = 0; historyError = '';
+    await loadMoreHistory();
+  }
+  async function loadMoreHistory(): Promise<void> {
+    const assetId = historyAssetId;
+    if (!assetId || historyBusy) return;
+    historyBusy = true;
+    try {
+      const page = await api.history(assetId, historyRows.length);
+      if (historyAssetId === assetId) { historyRows = [...historyRows, ...page.revisions]; historyTotal = page.total; }
+    } catch { historyError = 'Could not load history. Please try again.'; }
+    finally { historyBusy = false; }
   }
 
   async function processUploadQueue(): Promise<void> {
@@ -818,9 +902,15 @@
     replaceInProgress = true;
 
     try {
-      await api.replaceAssetFile(editingAssetId, file);
+      const assetId = editingAssetId;
+      const asset = assets.find(asset => asset.id === assetId);
+      if (!asset) return;
+      const history = await api.history(assetId);
+      const decision = await askUploadChoice(file, [{ asset, revision: history.revisions[0].revision }]);
+      if (!decision) return;
+      await api.replaceAssetFile(assetId, file, decision);
 
-      toast.success("File replaced. Please review metadata.");
+      toast.success("File update saved in history. Please review metadata.");
       await loadAssets();
     } catch (errorValue) {
       toast.error(
@@ -839,6 +929,14 @@
       return;
     }
     cancelEdit();
+  }
+
+  function onSettingsTabKeyDown(event: KeyboardEvent): void {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    settingsSection = event.key === 'Home' ? 'ai' : event.key === 'End' ? 'webmcp'
+      : settingsSection === 'ai' ? 'webmcp' : 'ai';
+    document.getElementById(`settings-${settingsSection}-tab`)?.focus();
   }
 
   function closeAiDialog(): void {
@@ -884,7 +982,7 @@
 
   async function removeAsset(asset: AssetView): Promise<void> {
     const shouldDelete = globalThis.confirm(
-      `Delete "${asset.title}"? This cannot be undone.`,
+      `Delete "${asset.title}" and all its historical versions? This cannot be undone.`,
     );
     if (!shouldDelete) return;
 
@@ -941,6 +1039,7 @@
   }
 
   onMount(loadAssets);
+  onMount(() => mountWebMcp({ changed: loadAssets, show: startEdit }, notifyAgentSupport));
   onMount(loadAiConfig);
   onMount(initializeTheme);
   onMount(onWindowScroll);
@@ -969,6 +1068,14 @@
   }
 </script>
 
+<style>
+  .asset-history { padding-left: 1.5rem; }
+  .asset-history li { border-bottom: 1px solid #8885; padding: 1rem 0; }
+  .asset-history dt { font-weight: 600; }
+  .asset-history a { color: inherit; text-decoration: underline; }
+  .asset-history dd { margin: 0 0 0.5rem; overflow-wrap: anywhere; }
+</style>
+
 <svelte:window
   on:dragenter={onWindowDragEnter}
   on:dragover={onWindowDragOver}
@@ -979,6 +1086,58 @@
 />
 
 <main class="assetlib-shell">
+  <nav class="assetlib-accountbar" aria-label="Account and settings">
+    <div class="assetlib-topbar-actions">
+      <Button
+        onclick={toggleTheme}
+        title="Toggle light/dark mode"
+        ariaLabel="Toggle light/dark mode"
+        iconOnly={true}
+      >
+        <Icon
+          icon={themeMode === "dark"
+            ? "mdi:weather-sunny"
+            : "mdi:weather-night"}
+          width="1rem"
+          height="1rem"
+          aria-hidden="true"
+        />
+      </Button>
+
+      <Button onclick={openGitHubRepo} title="Open repository on GitHub" ariaLabel="Open repository on GitHub" iconOnly>
+        <Icon icon="mdi:github" width="1rem" height="1rem" aria-hidden="true" />
+      </Button>
+
+      <Button
+        onclick={() => { settingsSection = 'ai'; aiSettingsOpen = true; }}
+        title="Settings"
+        ariaLabel="Settings"
+        iconOnly
+      >
+        <Icon icon="mdi:cog-outline" width="1rem" height="1rem" aria-hidden="true" />
+      </Button>
+      <span class="assetlib-webmcp-status" data-status={webMcpStatus}>
+        <Button
+          onclick={() => { settingsSection = 'webmcp'; aiSettingsOpen = true; }}
+          title={`WebMCP: ${webMcpStatusLabel}`}
+          ariaLabel={`WebMCP status: ${webMcpStatusLabel}`}
+          iconOnly
+        >
+          <Icon icon="mdi:connection" width="1rem" height="1rem" aria-hidden="true" />
+        </Button>
+        <span class="assetlib-webmcp-dot" aria-hidden="true"></span>
+      </span>
+    </div>
+    {#if data.auth?.enabled && data.auth.user}
+      <div class="assetlib-account">
+        <span>{data.auth.user.name}</span>
+        <form method="POST" action="/auth/logout">
+          <Button type="submit">Sign out</Button>
+        </form>
+      </div>
+    {/if}
+  </nav>
+
   {#if isDragging}
     <div class="assetlib-drop-overlay" aria-hidden="true">
       <div class="assetlib-drop-overlay-card">Drop files to queue upload</div>
@@ -1008,40 +1167,6 @@
       </div>
     </div>
     <div class="assetlib-topbar-actions">
-      <Button
-        onclick={toggleTheme}
-        title="Toggle light/dark mode"
-        iconOnly={true}
-      >
-        <Icon
-          icon={themeMode === "dark"
-            ? "mdi:weather-sunny"
-            : "mdi:weather-night"}
-          width="1rem"
-          height="1rem"
-          aria-hidden="true"
-        />
-      </Button>
-
-      <Button onclick={openGitHubRepo} title="Open repository on GitHub">
-        <Icon icon="mdi:github" width="1rem" height="1rem" aria-hidden="true" />
-        View on GitHub
-      </Button>
-
-      <Button
-        onclick={() => {
-          aiSettingsOpen = true;
-        }}
-      >
-        <Icon
-          icon="mingcute:file-ai-fill"
-          width="1rem"
-          height="1rem"
-          aria-hidden="true"
-        />
-        AI</Button
-      >
-
       <input
         bind:this={uploadInputEl}
         type="file"
@@ -1183,13 +1308,14 @@
       </label>
 
       {#snippet actions()}
+        <Button onclick={() => editingAssetId && openHistory(editingAssetId)}>Version History</Button>
         <Button
           disabled={saveInProgress ||
             replaceInProgress ||
             deletingAssetId === editingAssetId}
           onclick={triggerReplaceFilePicker}
         >
-          {replaceInProgress ? "Replacing..." : "Replace File"}
+          {replaceInProgress ? "Saving file..." : "Upload File Update"}
         </Button>
         <Button
           variant="delete"
@@ -1218,98 +1344,215 @@
     </Dialog>
   {/if}
 
+  {#if historyAssetId}
+    <Dialog ariaLabel="Asset version history" title="Version History" scrollable onClose={() => { historyAssetId = null; }}>
+      <p>Every file and metadata update is recorded. Replacements retain the version number; new versions increment it.</p>
+      {#if historyError}<p role="alert">{historyError}</p>{/if}
+      <ol class="asset-history">
+        {#each historyRows as entry (entry.revision)}
+          <li>
+            <h3>Version {entry.version} · {entry.operation} · Change #{entry.revision}</h3>
+            <p>{new Date(entry.createdAt).toLocaleString()} · {entry.actor?.name ?? 'Unknown / authentication disabled'}</p>
+            {#if entry.note}<p>{entry.note}</p>{/if}
+            {#if entry.asset.thumbnailUrl}<img src={entry.asset.thumbnailUrl} alt="Preview of version {entry.version}" width="160" />{/if}
+            <dl>
+              <dt>File</dt><dd>{entry.asset.originalName} · {formatSize(entry.asset.size)}</dd>
+              <dt>Title</dt><dd>{entry.asset.title}</dd>
+              <dt>Description</dt><dd>{entry.asset.description || '—'}</dd>
+              <dt>Tags</dt><dd>{entry.asset.tags.join(', ') || '—'}</dd>
+              <dt>Licenses</dt><dd>{entry.asset.licenses.join(', ')}</dd>
+              <dt>Source</dt><dd>{entry.asset.sourceUrl || '—'}</dd>
+              <dt>SHA-256</dt><dd >{entry.asset.hash || 'Unavailable'}</dd>
+            </dl>
+            <a href={entry.asset.downloadUrl}>Download this revision</a>
+          </li>
+        {/each}
+      </ol>
+      {#if historyBusy}<p role="status">Loading history…</p>{/if}
+      {#snippet actions()}
+        {#if historyRows.length < historyTotal}<Button disabled={historyBusy} onclick={loadMoreHistory}>Load More Changes</Button>{/if}
+        {#if historyError}<Button disabled={historyBusy} onclick={loadMoreHistory}>Retry</Button>{/if}
+        <Button onclick={() => { historyAssetId = null; }}>Close History</Button>
+      {/snippet}
+    </Dialog>
+  {/if}
+
+  {#if uploadChoice}
+    <Dialog ariaLabel="Choose upload version" title="Save File Update" scrollable onClose={() => finishUploadChoice(null)}>
+      <p><strong>{uploadChoice.file.name}</strong>: choose the asset and how to save this update.</p>
+      <label class="assetlib-modal-label">
+        <span>Existing asset</span>
+        <select bind:value={uploadChoiceTarget}>
+          <option value="" disabled>Select an asset</option>
+          {#each uploadChoice.matches as match}
+            <option value={match.asset.id}>{match.asset.title} ({match.asset.originalName})</option>
+          {/each}
+        </select>
+      </label>
+      <label class="assetlib-modal-label"><span>Change note (optional)</span><textarea bind:value={uploadChangeNote} maxlength="2000" rows="2"></textarea></label>
+      <p>New Version increases the version number. Replace Current keeps the version number. Both retain the previous file in history and preserve existing metadata.</p>
+      {#snippet actions()}
+        <Button variant="emphasized" disabled={!uploadChoiceTarget} onclick={() => finishUploadChoice('new-version')}>Save New Version</Button>
+        <Button disabled={!uploadChoiceTarget} onclick={() => finishUploadChoice('replace')}>Replace Current</Button>
+        <Button onclick={() => finishUploadChoice(null)}>Cancel Upload</Button>
+      {/snippet}
+    </Dialog>
+  {/if}
+
   {#if aiSettingsOpen}
     <Dialog
       bind:this={aiDialogRef}
-      ariaLabel="AI connection settings"
-      title="AI Auto Metadata"
+      ariaLabel="Settings"
+      title="Settings"
+      wide
+      scrollable
       onClose={() => {
         aiSettingsOpen = false;
       }}
     >
-      <p class="assetlib-muted">
-        Connect an OpenAI-compatible endpoint to auto-generate tags and a short
-        description on upload.
-      </p>
+      <div class="assetlib-settings-layout">
+        <div class="assetlib-settings-nav" role="tablist" aria-label="Settings sections" aria-orientation="vertical">
+          <button
+            id="settings-ai-tab"
+            type="button"
+            role="tab"
+            aria-selected={settingsSection === 'ai'}
+            aria-controls="settings-ai-panel"
+            tabindex={settingsSection === 'ai' ? 0 : -1}
+            on:keydown={onSettingsTabKeyDown}
+            on:click={() => settingsSection = 'ai'}
+          >
+            <Icon icon="mingcute:file-ai-fill" width="1rem" height="1rem" aria-hidden="true" />
+            AI
+          </button>
+          <button
+            id="settings-webmcp-tab"
+            type="button"
+            role="tab"
+            aria-selected={settingsSection === 'webmcp'}
+            aria-controls="settings-webmcp-panel"
+            tabindex={settingsSection === 'webmcp' ? 0 : -1}
+            on:keydown={onSettingsTabKeyDown}
+            on:click={() => settingsSection = 'webmcp'}
+          >
+            <Icon icon="mdi:connection" width="1rem" height="1rem" aria-hidden="true" />
+            WebMCP
+          </button>
+        </div>
+        {#if settingsSection === 'ai'}
+          <div tabindex="0" id="settings-ai-panel" class="assetlib-settings-content" role="tabpanel" aria-labelledby="settings-ai-tab">
+            <h3>AI</h3>
+            <p class="assetlib-muted">
+              Connect an OpenAI-compatible endpoint to auto-generate tags and a short
+              description on upload.
+            </p>
 
-      <label class="assetlib-toggle">
-        <input type="checkbox" bind:checked={aiConfig.enabled} />
-        <span>Enable auto metadata</span>
-      </label>
+            {#if aiConfig.readOnly}
+              <p class="assetlib-muted">AI settings are managed by the server.</p>
+            {/if}
+            <fieldset disabled={aiConfig.readOnly} style="border: 0; padding: 0; margin: 0; min-width: 0;">
+              <label class="assetlib-toggle">
+                <input type="checkbox" bind:checked={aiConfig.enabled} />
+                <span>Enable auto metadata</span>
+              </label>
 
-      <label class="assetlib-modal-label">
-        <span>Base URL</span>
-        <Input
-          bind:value={aiConfig.baseUrl}
-          placeholder="http://127.0.0.1:1234"
-        />
-      </label>
+              <label class="assetlib-modal-label">
+                <span>Base URL</span>
+                <Input
+                  bind:value={aiConfig.baseUrl}
+                  placeholder="http://127.0.0.1:1234"
+                />
+              </label>
 
-      <label class="assetlib-modal-label">
-        <span>Model</span>
-        <Input bind:value={aiConfig.model} placeholder="qwen2.5-7b-instruct" />
-      </label>
+              <label class="assetlib-modal-label">
+                <span>Model</span>
+                <Input bind:value={aiConfig.model} placeholder="qwen2.5-7b-instruct" />
+              </label>
 
-      <label class="assetlib-modal-label">
-        <span>API Key (optional)</span>
-        <Input
-          bind:value={aiConfig.apiKey}
-          placeholder="leave empty for local dev"
-        />
-      </label>
+              <label class="assetlib-modal-label">
+                <span>API Key (optional)</span>
+                <Input
+                  bind:value={aiConfig.apiKey}
+                  type="password"
+                  placeholder={aiConfig.apiKeyConfigured ? "Key configured; leave blank to keep it" : "leave empty for local dev"}
+                />
+              </label>
 
-      <label class="assetlib-modal-label">
-        <span>Timeout (ms)</span>
-        <Input
-          type="number"
-          min="1000"
-          step="500"
-          bind:value={aiConfig.timeoutMs}
-        />
-      </label>
+              <label class="assetlib-modal-label">
+                <span>Timeout (ms)</span>
+                <Input
+                  type="number"
+                  min="1000"
+                  step="500"
+                  bind:value={aiConfig.timeoutMs}
+                />
+              </label>
 
-      <label class="assetlib-modal-label">
-        <span>Temperature</span>
-        <Input
-          type="number"
-          min="0"
-          max="2"
-          step="0.1"
-          bind:value={aiConfig.temperature}
-        />
-      </label>
+              <label class="assetlib-modal-label">
+                <span>Temperature</span>
+                <Input
+                  type="number"
+                  min="0"
+                  max="2"
+                  step="0.1"
+                  bind:value={aiConfig.temperature}
+                />
+              </label>
 
-      <label class="assetlib-modal-label">
-        <span>Reasoning Effort</span>
-        <SelectField
-          bind:value={aiConfig.reasoningEffort}
-          options={AI_REASONING_EFFORT_OPTIONS}
-          disabled={aiConfig.disableThinking}
-          minWidth="100%"
-        />
-      </label>
+              <label class="assetlib-modal-label">
+                <span>Reasoning Effort</span>
+                <SelectField
+                  bind:value={aiConfig.reasoningEffort}
+                  options={AI_REASONING_EFFORT_OPTIONS}
+                  disabled={aiConfig.disableThinking}
+                  minWidth="100%"
+                />
+              </label>
 
-      <label class="assetlib-toggle">
-        <input type="checkbox" bind:checked={aiConfig.disableThinking} />
-        <span>Disable model thinking (force reasoning effort = none)</span>
-      </label>
+              <label class="assetlib-toggle">
+                <input type="checkbox" bind:checked={aiConfig.disableThinking} />
+                <span>Disable model thinking (force reasoning effort = none)</span>
+              </label>
 
-      <label class="assetlib-modal-label">
-        <span>Custom Instruction (optional)</span>
-        <textarea
-          bind:value={aiConfig.customInstruction}
-          class="assetlib-description-input"
-          placeholder="Example: prioritize game-ready surface keywords and avoid brand names"
-          rows="3"
-          maxlength="1000"
-        ></textarea>
-      </label>
+              <label class="assetlib-modal-label">
+                <span>Custom Instruction (optional)</span>
+                <textarea
+                  bind:value={aiConfig.customInstruction}
+                  class="assetlib-description-input"
+                  placeholder="Example: prioritize game-ready surface keywords and avoid brand names"
+                  rows="3"
+                  maxlength="1000"
+                ></textarea>
+              </label>
+            </fieldset>
+          </div>
+        {:else}
+          <div tabindex="0" id="settings-webmcp-panel" class="assetlib-settings-content" role="tabpanel" aria-labelledby="settings-webmcp-tab">
+            <h3>WebMCP</h3>
+            <p class="assetlib-webmcp-state" data-status={webMcpStatus}>{webMcpStatusLabel}</p>
+            {#if webMcpStatus === 'available'}
+              <p>This page has registered seven tools for your agent: search, asset details, version history, text previews, opening assets, metadata updates and text imports.</p>
+              <p>Browser tools are ready. An agent still needs a compatible browser connector or a local WebMCP-to-MCP bridge to use them.</p>
+            {:else if webMcpStatus === 'unsupported'}
+              <p>This browser does not expose WebMCP. Enable WebMCP in a compatible browser and reload the library.</p>
+            {:else if webMcpStatus === 'failed'}
+              <p>The browser could not register the library tools. Reload the page to try again.</p>
+            {:else}
+              <p>Checking whether this browser can register the library tools.</p>
+            {/if}
+            <p>For Codex CLI, connect a local MCP bridge to this signed-in browser tab. Your normal library login is used; no additional app server is needed.</p>
+            <a class="assetlib-settings-guide" href="https://developer.chrome.com/docs/devtools/application/webmcp#automation_and_agents" target="_blank" rel="noopener noreferrer">Chrome bridge setup guide</a>
+          </div>
+        {/if}
+      </div>
 
       {#snippet actions()}
-        <Button variant="emphasized" onclick={saveAiConfig} disabled={aiSaving}>
-          {aiSaving ? "Saving..." : "Save"}
-        </Button>
-        <Button onclick={closeAiDialog}>Cancel</Button>
+        {#if settingsSection === 'ai'}
+          <Button variant="emphasized" onclick={saveAiConfig} disabled={aiSaving || aiConfig.readOnly}>
+            {aiSaving ? "Saving..." : "Save"}
+          </Button>
+        {/if}
+        <Button onclick={closeAiDialog}>Close</Button>
       {/snippet}
     </Dialog>
   {/if}

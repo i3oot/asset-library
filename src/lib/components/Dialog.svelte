@@ -9,12 +9,16 @@
     onClose,
     children,
     actions,
+    scrollable = false,
+    wide = false,
   }: {
     ariaLabel: string;
     title?: string;
     onClose?: () => void;
     children?: Snippet;
     actions?: Snippet;
+    scrollable?: boolean;
+    wide?: boolean;
   } = $props();
 
   let dialogEl: HTMLDialogElement | null = null;
@@ -71,6 +75,8 @@
 <dialog
   bind:this={dialogEl}
   class="panel assetlib-glass"
+  class:scrollable
+  class:wide
   class:is-closing={isClosing}
   use:openAsModal
   aria-label={ariaLabel}
@@ -79,7 +85,11 @@
   {#if title}
     <h2>{title}</h2>
   {/if}
-  {@render children?.()}
+  {#if scrollable}
+    <div class="scroll-body">{@render children?.()}</div>
+  {:else}
+    {@render children?.()}
+  {/if}
   {#if actions}
     <div class="actions">
       {@render actions()}
@@ -89,6 +99,8 @@
 
 <style>
   .panel {
+    color: var(--app-text);
+    background: var(--backgroundLightOpaque);
     width: min(420px, calc(100% - 2rem));
     max-width: 420px;
     max-height: calc(100dvh - 2rem);
@@ -104,6 +116,11 @@
     z-index: var(--z-modal);
     opacity: 0;
     animation: dialog-open 160ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  }
+
+  .panel.wide {
+    width: min(780px, calc(100% - 2rem));
+    max-width: 780px;
   }
 
   .backdrop {
@@ -133,7 +150,12 @@
     display: flex;
     justify-content: flex-end;
     gap: 0.5rem;
+    flex-wrap: wrap;
+    flex-shrink: 0;
   }
+
+  .panel.scrollable { display: flex; flex-direction: column; overflow: hidden; box-sizing: border-box; }
+  .scroll-body { min-height: 0; overflow: auto; }
 
   @keyframes dialog-open {
     from {

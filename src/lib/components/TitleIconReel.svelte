@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Icon from "@iconify/svelte";
+  import Icon from "$lib/components/Icon.svelte";
   import type { AssetCategory } from "$lib/types";
 
   export let categories: AssetCategory[] = [];

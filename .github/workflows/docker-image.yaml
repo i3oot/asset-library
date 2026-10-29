@@ -1,22 +1,64 @@
 name: Build and Publish Docker Image
 
 on:
+  workflow_dispatch:
   push:
-    workflow_dispatch:
+    branches: ["main", "fix/**"]
     tags: ["v*"] # Optional: publish on version tags too
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: asset_library_test
+          POSTGRES_DB: asset_library_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U asset_library_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://asset_library_test@127.0.0.1:5432/asset_library_test
+      OTEL_SDK_DISABLED: "true"
+      DO_NOT_TRACK: "1"
 
     permissions:
       contents: read
       packages: write # Required for GHCR publishing
-      id-token: write # Needed for OIDC authentication (no PAT needed)
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install isolated renderer test browser
+        run: |
+          npm ci
+          browser_path=$(command -v google-chrome || command -v chromium || true)
+          if [ -n "$browser_path" ]; then
+            echo "TEST_CHROMIUM_PATH=$browser_path" >> "$GITHUB_ENV"
+          else
+            npx playwright-core install --with-deps chromium
+            node --input-type=module -e "import { chromium } from 'playwright-core'; console.log('TEST_CHROMIUM_PATH=' + chromium.executablePath())" >> "$GITHUB_ENV"
+          fi
+
+      - name: Validate and test
+        run: |
+          npm audit --omit=dev
+          npm run check
+          npm test
 
       - name: Extract version from tag
         id: version
@@ -39,7 +81,7 @@ jobs:
           cat package.json | grep version
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -47,14 +89,87 @@ jobs:
 
       - name: Extract metadata (tags, labels)
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            type=ref,event=tag
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
+          target: runner
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Build and push isolated model renderer
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: thumbnail-renderer
+          push: true
+          tags: ghcr.io/${{ github.repository }}-renderer:sha-${{ github.sha }}
+
+      - name: Build and push renderer firewall initializer
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: renderer-network-guard
+          push: true
+          tags: ghcr.io/${{ github.repository }}-renderer-network-guard:sha-${{ github.sha }}
+
+      - name: Smoke-test published images under workload isolation
+        env:
+          APP_IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          RENDERER_IMAGE: ghcr.io/${{ github.repository }}-renderer:sha-${{ github.sha }}
+          GUARD_IMAGE: ghcr.io/${{ github.repository }}-renderer-network-guard:sha-${{ github.sha }}
+        run: |
+          trap 'docker rm -f asset-library-app-smoke asset-library-renderer-smoke asset-library-network-smoke >/dev/null 2>&1 || true' EXIT
+          docker run --detach --name asset-library-app-smoke --network none --read-only --cap-drop ALL --security-opt no-new-privileges --memory 4g --cpus 1 --tmpfs /tmp:rw,size=536870912 --tmpfs /app/data:rw,uid=1000,gid=1000,size=536870912 -e ORIGIN=http://127.0.0.1:3000 -e AI_ENABLED=false "$APP_IMAGE"
+          docker exec asset-library-app-smoke node scripts/smoke-app.mjs
+          docker run --detach --name asset-library-network-smoke --read-only --cap-drop ALL --cap-add NET_ADMIN --security-opt no-new-privileges --tmpfs /tmp --tmpfs /run --entrypoint /bin/sh "$GUARD_IMAGE" -c '/usr/local/bin/renderer-firewall && touch /tmp/firewall-ready && exec sleep 300'
+          for attempt in $(seq 1 30); do docker exec asset-library-network-smoke test -f /tmp/firewall-ready && break || sleep 1; done
+          docker exec asset-library-network-smoke test -f /tmp/firewall-ready
+          # Reuse the guarded namespace with no renderer capabilities, as in a pod.
+          docker run --detach --name asset-library-renderer-smoke --network container:asset-library-network-smoke --read-only --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 1 --tmpfs /tmp:rw,size=536870912 --shm-size 128m -e RENDERER_DIAGNOSTICS=ci-smoke -e DEBUG=pw:browser "$RENDERER_IMAGE"
+          docker exec asset-library-renderer-smoke node scripts/smoke-renderer.mjs || { docker logs asset-library-renderer-smoke; exit 1; }
+          docker exec asset-library-renderer-smoke node --input-type=module -e 'import net from "node:net"; const socket=net.createConnection({host:"1.1.1.1",port:443}); socket.setTimeout(3000); socket.once("connect",()=>process.exit(1)); socket.once("timeout",()=>{socket.destroy();process.exit(0)}); socket.once("error",()=>process.exit(0));'
+          # /proc files report size zero even when populated. Fail closed if
+          # IPv6 exists but the IPv6 rule installer is unavailable.
+          docker run --rm --network none --cap-drop ALL --cap-add NET_ADMIN --security-opt no-new-privileges --sysctl net.ipv6.conf.all.disable_ipv6=0 --sysctl net.ipv6.conf.lo.disable_ipv6=0 --tmpfs /tmp --tmpfs /run --entrypoint /bin/sh "$GUARD_IMAGE" -c 'set -eu; ip -6 addr add fd00::1234/128 dev lo; grep -q "^fd00" /proc/net/if_inet6; tool=$(command -v ip6tables); rm "$tool"; ln -s /bin/false "$tool"; if /usr/local/bin/renderer-firewall >/tmp/guard-failure.log 2>&1; then cat /tmp/guard-failure.log; echo "Unsafe IPv6 fallback"; exit 1; fi; grep -q "IPv6 isolation could not be configured" /tmp/guard-failure.log'
+          guard_ip=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' asset-library-network-smoke)
+          docker run --rm "$APP_IMAGE" node --input-type=module -e 'const response=await fetch("http://"+process.argv[1]+":8080/health",{signal:AbortSignal.timeout(5000)}); if(!response.ok)process.exit(1)' "$guard_ip"
+
+      - name: Scan app image for fixable high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.1
+          image-ref: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Scan isolated renderer image for fixable high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.1
+          image-ref: ghcr.io/${{ github.repository }}-renderer:sha-${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Scan renderer firewall initializer
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.1
+          image-ref: ghcr.io/${{ github.repository }}-renderer-network-guard:sha-${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'

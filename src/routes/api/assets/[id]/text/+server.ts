@@ -1,6 +1,7 @@
+import { requestedAsset } from "$lib/server/asset-response";
 import { readFile } from "node:fs/promises";
 import { error, json, type RequestHandler } from "@sveltejs/kit";
-import { getAssetById, getStoredFilePath } from "$lib/server/assets";
+import { getStoredFilePath } from "$lib/server/assets";
 
 const decoder = new TextDecoder();
 
@@ -9,7 +10,7 @@ export const GET: RequestHandler = async ({ params }) => {
     throw error(400, "Missing asset id");
   }
 
-  const asset = await getAssetById(params.id);
+  const asset = await requestedAsset(params.id, params.revision);
   if (!asset) {
     throw error(404, "Asset not found");
   }

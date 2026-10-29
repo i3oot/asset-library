@@ -47,7 +47,13 @@
   let uploadChangeNote = '';
   let resolveUploadChoice: ((choice: UploadDecision | null) => void) | null = null;
   let decisionTail = Promise.resolve();
+  let webMcpStatus: WebMcpStatus | 'checking' = 'checking';
+  let settingsSection: 'ai' | 'webmcp' = 'ai';
+  $: webMcpStatusLabel = webMcpStatus === 'available' ? 'Available'
+    : webMcpStatus === 'unsupported' ? 'Unsupported browser'
+    : webMcpStatus === 'failed' ? 'Registration failed' : 'Checking support';
   function notifyAgentSupport(status: WebMcpStatus): void {
+    webMcpStatus = status;
     if (status === 'available') return;
     const key = `asset-library:webmcp-notice:${status}`;
     try {
@@ -63,7 +69,7 @@
       position: 'bottom-right',
       closeButton: true,
       duration: 9000,
-      action: { label: 'Setup guide', onClick: () => { window.open('https://learn.chatgpt.com/docs/webmcp', '_blank', 'noopener,noreferrer'); } },
+      action: { label: 'Connection details', onClick: () => { settingsSection = 'webmcp'; aiSettingsOpen = true; } },
     });
   }
   const SORT_MODE_OPTIONS = [
@@ -925,6 +931,14 @@
     cancelEdit();
   }
 
+  function onSettingsTabKeyDown(event: KeyboardEvent): void {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    settingsSection = event.key === 'Home' ? 'ai' : event.key === 'End' ? 'webmcp'
+      : settingsSection === 'ai' ? 'webmcp' : 'ai';
+    document.getElementById(`settings-${settingsSection}-tab`)?.focus();
+  }
+
   function closeAiDialog(): void {
     if (aiDialogRef) {
       aiDialogRef.requestClose();
@@ -1077,6 +1091,7 @@
       <Button
         onclick={toggleTheme}
         title="Toggle light/dark mode"
+        ariaLabel="Toggle light/dark mode"
         iconOnly={true}
       >
         <Icon
@@ -1089,24 +1104,29 @@
         />
       </Button>
 
-      <Button onclick={openGitHubRepo} title="Open repository on GitHub">
+      <Button onclick={openGitHubRepo} title="Open repository on GitHub" ariaLabel="Open repository on GitHub" iconOnly>
         <Icon icon="mdi:github" width="1rem" height="1rem" aria-hidden="true" />
-        View on GitHub
       </Button>
 
       <Button
-        onclick={() => {
-          aiSettingsOpen = true;
-        }}
+        onclick={() => { settingsSection = 'ai'; aiSettingsOpen = true; }}
+        title="Settings"
+        ariaLabel="Settings"
+        iconOnly
       >
-        <Icon
-          icon="mingcute:file-ai-fill"
-          width="1rem"
-          height="1rem"
-          aria-hidden="true"
-        />
-        AI</Button
-      >
+        <Icon icon="mdi:cog-outline" width="1rem" height="1rem" aria-hidden="true" />
+      </Button>
+      <span class="assetlib-webmcp-status" data-status={webMcpStatus}>
+        <Button
+          onclick={() => { settingsSection = 'webmcp'; aiSettingsOpen = true; }}
+          title={`WebMCP: ${webMcpStatusLabel}`}
+          ariaLabel={`WebMCP status: ${webMcpStatusLabel}`}
+          iconOnly
+        >
+          <Icon icon="mdi:connection" width="1rem" height="1rem" aria-hidden="true" />
+        </Button>
+        <span class="assetlib-webmcp-dot" aria-hidden="true"></span>
+      </span>
     </div>
     {#if data.auth?.enabled && data.auth.user}
       <div class="assetlib-account">
@@ -1382,101 +1402,157 @@
   {#if aiSettingsOpen}
     <Dialog
       bind:this={aiDialogRef}
-      ariaLabel="AI connection settings"
-      title="AI Auto Metadata"
+      ariaLabel="Settings"
+      title="Settings"
+      wide
+      scrollable
       onClose={() => {
         aiSettingsOpen = false;
       }}
     >
-      <p class="assetlib-muted">
-        Connect an OpenAI-compatible endpoint to auto-generate tags and a short
-        description on upload.
-      </p>
+      <div class="assetlib-settings-layout">
+        <div class="assetlib-settings-nav" role="tablist" aria-label="Settings sections" aria-orientation="vertical">
+          <button
+            id="settings-ai-tab"
+            type="button"
+            role="tab"
+            aria-selected={settingsSection === 'ai'}
+            aria-controls="settings-ai-panel"
+            tabindex={settingsSection === 'ai' ? 0 : -1}
+            on:keydown={onSettingsTabKeyDown}
+            on:click={() => settingsSection = 'ai'}
+          >
+            <Icon icon="mingcute:file-ai-fill" width="1rem" height="1rem" aria-hidden="true" />
+            AI
+          </button>
+          <button
+            id="settings-webmcp-tab"
+            type="button"
+            role="tab"
+            aria-selected={settingsSection === 'webmcp'}
+            aria-controls="settings-webmcp-panel"
+            tabindex={settingsSection === 'webmcp' ? 0 : -1}
+            on:keydown={onSettingsTabKeyDown}
+            on:click={() => settingsSection = 'webmcp'}
+          >
+            <Icon icon="mdi:connection" width="1rem" height="1rem" aria-hidden="true" />
+            WebMCP
+          </button>
+        </div>
+        {#if settingsSection === 'ai'}
+          <div tabindex="0" id="settings-ai-panel" class="assetlib-settings-content" role="tabpanel" aria-labelledby="settings-ai-tab">
+            <h3>AI</h3>
+            <p class="assetlib-muted">
+              Connect an OpenAI-compatible endpoint to auto-generate tags and a short
+              description on upload.
+            </p>
 
-      {#if aiConfig.readOnly}
-        <p class="assetlib-muted">AI settings are managed by the server.</p>
-      {/if}
-      <fieldset disabled={aiConfig.readOnly} style="border: 0; padding: 0; margin: 0; min-width: 0;">
-        <label class="assetlib-toggle">
-          <input type="checkbox" bind:checked={aiConfig.enabled} />
-          <span>Enable auto metadata</span>
-        </label>
+            {#if aiConfig.readOnly}
+              <p class="assetlib-muted">AI settings are managed by the server.</p>
+            {/if}
+            <fieldset disabled={aiConfig.readOnly} style="border: 0; padding: 0; margin: 0; min-width: 0;">
+              <label class="assetlib-toggle">
+                <input type="checkbox" bind:checked={aiConfig.enabled} />
+                <span>Enable auto metadata</span>
+              </label>
 
-        <label class="assetlib-modal-label">
-          <span>Base URL</span>
-          <Input
-            bind:value={aiConfig.baseUrl}
-            placeholder="http://127.0.0.1:1234"
-          />
-        </label>
+              <label class="assetlib-modal-label">
+                <span>Base URL</span>
+                <Input
+                  bind:value={aiConfig.baseUrl}
+                  placeholder="http://127.0.0.1:1234"
+                />
+              </label>
 
-        <label class="assetlib-modal-label">
-          <span>Model</span>
-          <Input bind:value={aiConfig.model} placeholder="qwen2.5-7b-instruct" />
-        </label>
+              <label class="assetlib-modal-label">
+                <span>Model</span>
+                <Input bind:value={aiConfig.model} placeholder="qwen2.5-7b-instruct" />
+              </label>
 
-        <label class="assetlib-modal-label">
-          <span>API Key (optional)</span>
-          <Input
-            bind:value={aiConfig.apiKey}
-            type="password"
-            placeholder={aiConfig.apiKeyConfigured ? "Key configured; leave blank to keep it" : "leave empty for local dev"}
-          />
-        </label>
+              <label class="assetlib-modal-label">
+                <span>API Key (optional)</span>
+                <Input
+                  bind:value={aiConfig.apiKey}
+                  type="password"
+                  placeholder={aiConfig.apiKeyConfigured ? "Key configured; leave blank to keep it" : "leave empty for local dev"}
+                />
+              </label>
 
-        <label class="assetlib-modal-label">
-          <span>Timeout (ms)</span>
-          <Input
-            type="number"
-            min="1000"
-            step="500"
-            bind:value={aiConfig.timeoutMs}
-          />
-        </label>
+              <label class="assetlib-modal-label">
+                <span>Timeout (ms)</span>
+                <Input
+                  type="number"
+                  min="1000"
+                  step="500"
+                  bind:value={aiConfig.timeoutMs}
+                />
+              </label>
 
-        <label class="assetlib-modal-label">
-          <span>Temperature</span>
-          <Input
-            type="number"
-            min="0"
-            max="2"
-            step="0.1"
-            bind:value={aiConfig.temperature}
-          />
-        </label>
+              <label class="assetlib-modal-label">
+                <span>Temperature</span>
+                <Input
+                  type="number"
+                  min="0"
+                  max="2"
+                  step="0.1"
+                  bind:value={aiConfig.temperature}
+                />
+              </label>
 
-        <label class="assetlib-modal-label">
-          <span>Reasoning Effort</span>
-          <SelectField
-            bind:value={aiConfig.reasoningEffort}
-            options={AI_REASONING_EFFORT_OPTIONS}
-            disabled={aiConfig.disableThinking}
-            minWidth="100%"
-          />
-        </label>
+              <label class="assetlib-modal-label">
+                <span>Reasoning Effort</span>
+                <SelectField
+                  bind:value={aiConfig.reasoningEffort}
+                  options={AI_REASONING_EFFORT_OPTIONS}
+                  disabled={aiConfig.disableThinking}
+                  minWidth="100%"
+                />
+              </label>
 
-        <label class="assetlib-toggle">
-          <input type="checkbox" bind:checked={aiConfig.disableThinking} />
-          <span>Disable model thinking (force reasoning effort = none)</span>
-        </label>
+              <label class="assetlib-toggle">
+                <input type="checkbox" bind:checked={aiConfig.disableThinking} />
+                <span>Disable model thinking (force reasoning effort = none)</span>
+              </label>
 
-        <label class="assetlib-modal-label">
-          <span>Custom Instruction (optional)</span>
-          <textarea
-            bind:value={aiConfig.customInstruction}
-            class="assetlib-description-input"
-            placeholder="Example: prioritize game-ready surface keywords and avoid brand names"
-            rows="3"
-            maxlength="1000"
-          ></textarea>
-        </label>
-      </fieldset>
+              <label class="assetlib-modal-label">
+                <span>Custom Instruction (optional)</span>
+                <textarea
+                  bind:value={aiConfig.customInstruction}
+                  class="assetlib-description-input"
+                  placeholder="Example: prioritize game-ready surface keywords and avoid brand names"
+                  rows="3"
+                  maxlength="1000"
+                ></textarea>
+              </label>
+            </fieldset>
+          </div>
+        {:else}
+          <div tabindex="0" id="settings-webmcp-panel" class="assetlib-settings-content" role="tabpanel" aria-labelledby="settings-webmcp-tab">
+            <h3>WebMCP</h3>
+            <p class="assetlib-webmcp-state" data-status={webMcpStatus}>{webMcpStatusLabel}</p>
+            {#if webMcpStatus === 'available'}
+              <p>This page has registered seven tools for your agent: search, asset details, version history, text previews, opening assets, metadata updates and text imports.</p>
+              <p>Browser tools are ready. An agent still needs a compatible browser connector or a local WebMCP-to-MCP bridge to use them.</p>
+            {:else if webMcpStatus === 'unsupported'}
+              <p>This browser does not expose WebMCP. Enable WebMCP in a compatible browser and reload the library.</p>
+            {:else if webMcpStatus === 'failed'}
+              <p>The browser could not register the library tools. Reload the page to try again.</p>
+            {:else}
+              <p>Checking whether this browser can register the library tools.</p>
+            {/if}
+            <p>For Codex CLI, connect a local MCP bridge to this signed-in browser tab. Your normal library login is used; no additional app server is needed.</p>
+            <a class="assetlib-settings-guide" href="https://developer.chrome.com/docs/devtools/application/webmcp#automation_and_agents" target="_blank" rel="noopener noreferrer">Chrome bridge setup guide</a>
+          </div>
+        {/if}
+      </div>
 
       {#snippet actions()}
-        <Button variant="emphasized" onclick={saveAiConfig} disabled={aiSaving || aiConfig.readOnly}>
-          {aiSaving ? "Saving..." : "Save"}
-        </Button>
-        <Button onclick={closeAiDialog}>Cancel</Button>
+        {#if settingsSection === 'ai'}
+          <Button variant="emphasized" onclick={saveAiConfig} disabled={aiSaving || aiConfig.readOnly}>
+            {aiSaving ? "Saving..." : "Save"}
+          </Button>
+        {/if}
+        <Button onclick={closeAiDialog}>Close</Button>
       {/snippet}
     </Dialog>
   {/if}

@@ -222,6 +222,37 @@ body {
   flex-shrink: 0;
 }
 
+.assetlib-webmcp-status { position: relative; display: inline-flex; }
+.assetlib-webmcp-dot {
+  position: absolute; right: 0; bottom: 0; width: 0.5rem; height: 0.5rem;
+  border-radius: 50%; background: var(--app-text-muted); border: 1px solid var(--backgroundLightOpaque);
+  pointer-events: none;
+}
+.assetlib-webmcp-status[data-status="available"] .assetlib-webmcp-dot { background: var(--success); }
+.assetlib-webmcp-status[data-status="unsupported"] .assetlib-webmcp-dot { background: var(--warning); }
+.assetlib-webmcp-status[data-status="failed"] .assetlib-webmcp-dot { background: var(--error); }
+.assetlib-settings-layout { display: grid; grid-template-columns: 136px minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+.assetlib-settings-nav { display: grid; gap: 0.4rem; position: sticky; top: 0; }
+.assetlib-settings-nav button {
+  display: flex; align-items: center; gap: 0.5rem; width: 100%; padding: 0.65rem 0.75rem;
+  border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--app-text-muted);
+  text-align: left; font: inherit; font-size: 0.875rem; cursor: pointer;
+}
+.assetlib-settings-nav button[aria-selected="true"] { background: var(--surface-inset); border-color: var(--borderHoverColor); color: var(--app-text); }
+.assetlib-settings-nav button:focus-visible, .assetlib-settings-guide:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.assetlib-settings-content { min-width: 0; display: grid; gap: 1rem; }
+.assetlib-settings-content h3 { margin: 0; font-size: 1.1rem; }
+.assetlib-settings-content p { margin: 0; line-height: 1.5; }
+.assetlib-settings-content fieldset { display: grid; gap: 0.9rem; }
+.assetlib-settings-content .assetlib-toggle { align-items: start; }
+.assetlib-settings-content .assetlib-toggle input { flex-shrink: 0; margin-top: 0.15rem; }
+.assetlib-settings-guide { color: inherit; text-decoration: underline; overflow-wrap: anywhere; }
+.assetlib-webmcp-state { font-weight: 600; }
+@media (max-width: 600px) {
+  .assetlib-settings-layout { grid-template-columns: 80px minmax(0, 1fr); gap: 0.75rem; }
+  .assetlib-settings-nav button { flex-direction: column; gap: 0.3rem; padding: 0.65rem 0.25rem; font-size: 0.8rem; text-align: center; }
+}
+
 .assetlib-topbar {
   padding: 1rem;
   display: flex;

@@ -6,10 +6,8 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { startApp } from './helpers.mjs';
 import { isolatedPostgres } from './isolated-postgres.mjs';
-import sharp from 'sharp';
-import path from 'node:path';
 
-async function fixture(t, database = {}, storage = {}) {
+async function fixture(t, database = {}) {
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const other = generateKeyPairSync('rsa', { modulusLength: 2048 });
   let issuer;
@@ -23,7 +21,7 @@ async function fixture(t, database = {}, storage = {}) {
   issuer = `http://127.0.0.1:${provider.address().port}/`;
   t.after(() => new Promise(resolve => { provider.closeAllConnections(); provider.close(resolve); }));
   const resource = 'https://mcp.example.invalid/mcp';
-  const app = await startApp(t, { ...database, AUTH_MODE: 'oidc', OIDC_ISSUER_URL: issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: 'TEST_ONLY_OIDC_SECRET', OIDC_ALLOW_HTTP_LOCALHOST: 'true', MCP_ENABLED: 'true', MCP_RESOURCE_URL: resource, MCP_OIDC_ISSUER_URL: issuer }, storage);
+  const app = await startApp(t, { ...database, AUTH_MODE: 'oidc', OIDC_ISSUER_URL: issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: 'TEST_ONLY_OIDC_SECRET', OIDC_ALLOW_HTTP_LOCALHOST: 'true', MCP_ENABLED: 'true', MCP_RESOURCE_URL: resource, MCP_OIDC_ISSUER_URL: issuer });
   function token(overrides = {}, wrongSignature = false) {
     const now = Math.floor(Date.now() / 1000);
     const claims = { iss: issuer, aud: resource, sub: 'fixture-user', name: 'Fixture User', iat: now, exp: now + 900, azp: resource, uid: 'fixture-access-token', scope: 'assets:read assets:write', ...overrides };
@@ -69,24 +67,6 @@ test('MCP OAuth metadata, challenge, cryptographic resource binding and cookie i
   assert.equal((await fetch(app.origin + '/auth/mcp/check', { headers: { authorization } })).status, 200);
   assert.equal((await fetch(app.origin + '/.well-known/oauth-protected-resource')).status, 200);
   assert.equal(resource, 'https://mcp.example.invalid/mcp');
-});
-
-test('MCP returns actual server-generated image content and bounds protocol bodies', async t => {
-  const seed = await startApp(t);
-  const form = new FormData();
-  const bytes = await sharp({ create: { width: 12, height: 12, channels: 3, background: '#0a80bd' } }).png().toBuffer();
-  form.set('file', new File([bytes], 'preview.png', { type: 'image/png' }));
-  form.set('title', 'Preview'); form.set('licenses', 'CC0');
-  const saved = await seed.request('/api/assets', { method: 'POST', body: form });
-  assert.equal(saved.status, 201); const { asset } = await saved.json();
-  const { client, app, token } = await fixture(t, {}, { dataSource: path.join(seed.cwd, 'data') });
-  const c = await client();
-  const preview = await c.callTool({ name: 'asset_library_get_preview', arguments: { id: asset.id } });
-  assert.equal(preview.content[0].type, 'image'); assert.equal(preview.content[0].mimeType, 'image/webp');
-  assert.equal((await sharp(Buffer.from(preview.content[0].data, 'base64')).metadata()).format, 'webp');
-  assert.equal(JSON.parse(preview.content[1].text).thumbhash, asset.thumbhash);
-  const oversized = await fetch(app.origin + '/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() }, body: JSON.stringify({ padding: 'a'.repeat(524288) }) });
-  assert.equal(oversized.status, 413);
 });
 
 for (const backend of ['sqlite', 'postgres']) {

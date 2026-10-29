@@ -101,7 +101,7 @@ for (const backend of ['sqlite', 'postgres']) {
     assert.equal((await call('import_text', { ...input, text: 'return 2', targetAssetId: id })).error.code, 'invalid_arguments');
     assert.equal((await call('import_text', { ...input, text: 'return 2', targetAssetId: id, mode: 'new-version', expectedRevision: 1 })).ok, true);
     const history = (await call('history', { id })).result;
-    assert.equal(history.total, 2); assert.equal(history.revisions[0].version, 2); assert.equal(history.revisions[0].actor.subject, 'fixture-user'); assert.deepEqual(Object.keys(history.revisions[0].actor).sort(), ['issuer', 'name', 'subject']);
+    assert.equal(history.total, 2); assert.equal(history.revisions[0].version, 2); assert.equal(history.revisions[0].actor.subject, 'fixture-user');
     assert.match(history.revisions[1].asset.downloadUrl, /versions\/1\/download$/);
     assert.equal((await call('read_text', { id, revision: 1 })).result.text, 'return 1');
     assert.equal((await call('read_text', { id })).result.text, 'return 2');

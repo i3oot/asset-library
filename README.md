@@ -357,10 +357,12 @@ are capped at 10,000 characters, and text imports at 256 KiB UTF-8. Binary files
 tool or tool for credentials/AI configuration. Metadata and file text are untrusted
 content, explicitly marked as such in tool annotations.
 
-Open the library in Codex's built-in browser, sign in through the normal OIDC flow,
-and enable Site Tools in Browser Permissions if available for your account/workspace.
-Then ask Codex to use the library tools, for example: “Find the model assets tagged
-vehicle and open the first preview.” No separate MCP server or token is required.
+In a supported agent/browser connector, sign in through the normal OIDC flow and
+use its page tools. Browser support alone is insufficient if the connector does
+not expose WebMCP invocation. For Codex CLI, use a local WebMCP-to-MCP bridge;
+see [Chrome bridge setup](docs/webmcp-cli-bridge.md). The bridge calls the existing
+page tools using the browser login. No separate app MCP endpoint or OAuth client
+is required.
 See [OpenAI's WebMCP instructions](https://learn.chatgpt.com/docs/webmcp).
 Codex CLI and external-browser automation do not automatically gain these tools;
 the consumer must support WebMCP. Unsupported browsers show a dismissible setup

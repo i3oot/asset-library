@@ -12,7 +12,7 @@ export async function startApp(t, overrides = {}, fixture = {}) {
   const socket = createServer(); socket.listen(0, '127.0.0.1'); await once(socket, 'listening');
   const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
   const origin = `http://127.0.0.1:${port}`;
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AI_') && !key.startsWith('DATABASE_') && !key.startsWith('OIDC_') && !key.startsWith('MODEL_THUMBNAIL_') && key !== 'AUTH_MODE'));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AI_') && !key.startsWith('DATABASE_') && !key.startsWith('OIDC_') && !key.startsWith('MCP_') && !key.startsWith('MODEL_THUMBNAIL_') && key !== 'AUTH_MODE'));
   const serverEnv = { ...env, HOST: '127.0.0.1', PORT: String(port), ORIGIN: origin, AI_ENABLED: 'false', PROTOCOL_HEADER: 'x-forwarded-proto', BODY_SIZE_LIMIT: '1M', ...overrides };
   let child;
   async function stop() {

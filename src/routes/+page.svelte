@@ -1,4 +1,7 @@
 <script lang="ts">
+  import type { PageData } from "./$types";
+  export let data: PageData;
+
   import Icon from "$lib/components/Icon.svelte";
   import Fuse from "fuse.js";
   import { toast } from "svelte-sonner";
@@ -1069,34 +1072,7 @@
 />
 
 <main class="assetlib-shell">
-  {#if isDragging}
-    <div class="assetlib-drop-overlay" aria-hidden="true">
-      <div class="assetlib-drop-overlay-card">Drop files to queue upload</div>
-    </div>
-  {/if}
-
-  <header class="assetlib-glass assetlib-topbar">
-    <div class="assetlib-title-wrap">
-      <TitleIconReel
-        categories={categoryOrder}
-        iconByCategory={categoryIconByType}
-      />
-      <h1>Asset Library</h1>
-      <div class="assetlib-title-stats">
-        <span>{assets.length}</span>
-        {#if uploadPendingCount > 0}
-          <span class="active assetlib-upload-indicator" aria-live="polite">
-            <Icon
-              icon="codex:loader"
-              width="1rem"
-              height="1rem"
-              aria-hidden="true"
-            />
-            Uploading {uploadPendingCount} left
-          </span>
-        {/if}
-      </div>
-    </div>
+  <nav class="assetlib-accountbar" aria-label="Account and settings">
     <div class="assetlib-topbar-actions">
       <Button
         onclick={toggleTheme}
@@ -1131,7 +1107,46 @@
         />
         AI</Button
       >
+    </div>
+    {#if data.auth?.enabled && data.auth.user}
+      <div class="assetlib-account">
+        <span>{data.auth.user.name}</span>
+        <form method="POST" action="/auth/logout">
+          <Button type="submit">Sign out</Button>
+        </form>
+      </div>
+    {/if}
+  </nav>
 
+  {#if isDragging}
+    <div class="assetlib-drop-overlay" aria-hidden="true">
+      <div class="assetlib-drop-overlay-card">Drop files to queue upload</div>
+    </div>
+  {/if}
+
+  <header class="assetlib-glass assetlib-topbar">
+    <div class="assetlib-title-wrap">
+      <TitleIconReel
+        categories={categoryOrder}
+        iconByCategory={categoryIconByType}
+      />
+      <h1>Asset Library</h1>
+      <div class="assetlib-title-stats">
+        <span>{assets.length}</span>
+        {#if uploadPendingCount > 0}
+          <span class="active assetlib-upload-indicator" aria-live="polite">
+            <Icon
+              icon="codex:loader"
+              width="1rem"
+              height="1rem"
+              aria-hidden="true"
+            />
+            Uploading {uploadPendingCount} left
+          </span>
+        {/if}
+      </div>
+    </div>
+    <div class="assetlib-topbar-actions">
       <input
         bind:this={uploadInputEl}
         type="file"

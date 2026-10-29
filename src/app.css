@@ -197,6 +197,31 @@ body {
   border-radius: 16px;
 }
 
+.assetlib-accountbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.assetlib-account {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.assetlib-account span {
+  overflow-wrap: anywhere;
+}
+
+.assetlib-account form {
+  margin: 0;
+  flex-shrink: 0;
+}
+
 .assetlib-topbar {
   padding: 1rem;
   display: flex;

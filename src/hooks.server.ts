@@ -1,6 +1,7 @@
 import { authEnabled, authHealth, sessionUser } from '$lib/server/auth';
 import type { Handle } from '@sveltejs/kit/hooks';
 import { mcpRequest } from '$lib/server/mcp';
+import { mcpSettings } from '$lib/server/mcp-auth';
 
 export const handle: Handle = async ({ event, resolve }) => {
   const mcp = await mcpRequest(event.request, event.url.pathname);
@@ -10,7 +11,11 @@ export const handle: Handle = async ({ event, resolve }) => {
     return Response.json({ error: 'Cross-origin mutations are forbidden' }, { status: 403 });
   }
   if (event.url.pathname === '/healthz' && event.request.method === 'GET') {
-    try { await authHealth(); return Response.json({ ready: true }, { headers: { 'Cache-Control': 'no-store' } }); }
+    try {
+      await authHealth();
+      if (process.env.MCP_ENABLED === 'true') mcpSettings();
+      return Response.json({ ready: true }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     catch { return Response.json({ ready: false }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
   }
   try {
